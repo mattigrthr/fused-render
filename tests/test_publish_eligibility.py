@@ -59,11 +59,11 @@ def test_an_import_we_cannot_place_forces_cpython(tmp_path):
     page = _app(
         tmp_path,
         '<html><script>fused.runPython("./calc.py")</script></html>',
-        **{"calc.py": "import pymupdf\n\ndef main():\n    return {}\n"},
+        **{"calc.py": "import pikepdf\n\ndef main():\n    return {}\n"},
     )
     elig = scan(page)
     assert elig.runtime is Capability.RUNTIME_CPYTHON
-    assert elig.unplaceable_imports == ["pymupdf"]
+    assert elig.unplaceable_imports == ["pikepdf"]
     # Not a blocker: some OTHER target may run CPython. It is the capability
     # comparison, not the scan, that refuses a target.
     assert elig.blockers == []
