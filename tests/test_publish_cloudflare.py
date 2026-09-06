@@ -46,7 +46,13 @@ if argv[:1] == ["login"]:
     finish(BANNER + "logged in", 0 if state["logged_in"] else 1, "" if state["logged_in"] else "browser closed")
 if argv[:3] == ["pages", "project", "list"]:
     if state.get("list_fails"): finish("", 1, "Authentication error [code: 10000]")
-    finish(BANNER + json.dumps([{"name": n} for n in state.get("projects", [])]))
+    # The REAL shape. `--json` on this one command serialises the human-readable
+    # table, so the key is the column heading — not "name", which is what the API
+    # and every other wrangler --json command use. A fake that emitted "name"
+    # made every test here pass against an adapter that could not recognise a
+    # single existing project.
+    finish(BANNER + json.dumps([{"Project Name": n, "Project Domains": n + ".pages.dev"}
+                                for n in state.get("projects", [])]))
 if argv[:3] == ["pages", "project", "create"]:
     name = argv[3]
     if name in state.get("taken", []):
@@ -208,3 +214,25 @@ def test_the_banner_wrangler_prints_before_its_json_is_ignored(wrangler):
     # warning. Scraping would break on that; finding the JSON does not.
     wrangler.update(logged_in=True)
     assert CloudflarePages().auth().account == "author@example.com"
+
+
+@pytest.mark.parametrize("key", ["Project Name", "name"])
+def test_an_existing_project_is_recognised_under_either_json_key(key):
+    # `wrangler pages project list --json` serialises the human-readable TABLE,
+    # so the name arrives under the column heading. Reading only "name" — the
+    # API's key, and every other wrangler --json command's — made every existing
+    # project look missing, which turned the second publish of an app into
+    # "that project no longer exists in this account".
+    from fused_render.publish.cloudflare import _project_key
+
+    assert _project_key({key: "chinese-hsk-cards"}) == "chinese-hsk-cards"
+
+
+@pytest.mark.parametrize("entry", ["chinese-hsk-cards", None, {}, {"Project Name": ""}])
+def test_a_project_entry_we_cannot_read_is_not_a_match(entry):
+    # Never guess: a shape we do not recognise must read as "no project", which
+    # refuses the re-publish loudly, rather than as a match, which would deploy
+    # over whatever project the name happened to resolve to.
+    from fused_render.publish.cloudflare import _project_key
+
+    assert _project_key(entry) is None

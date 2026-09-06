@@ -86,6 +86,28 @@ def project_name(app_name: str) -> str:
     return slug
 
 
+#: Where a project's name lives in ``wrangler pages project list --json``.
+#:
+#: ``--json`` on this command does NOT emit the API shape — it serialises the
+#: human-readable TABLE, so the key is the column heading ``"Project Name"``.
+#: ``"name"`` is what the REST API and every other wrangler ``--json`` command
+#: use, and is accepted too: reading both costs one tuple and means a wrangler
+#: that switches to the API shape does not silently break re-publishing. The
+#: failure mode this guards is quiet and bad — an existing project reads as
+#: missing, so a re-publish refuses on "that project no longer exists".
+_PROJECT_NAME_KEYS = ("Project Name", "name")
+
+
+def _project_key(entry: object) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    for key in _PROJECT_NAME_KEYS:
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class CloudflarePages:
     """The Cloudflare Pages adapter (``adapter.PublishAdapter``)."""
 
@@ -317,7 +339,7 @@ class CloudflarePages:
             raise PublishError(
                 "could not read the list of Cloudflare Pages projects. Nothing was published."
             )
-        return any(isinstance(p, dict) and p.get("name") == project for p in projects)
+        return any(_project_key(p) == project for p in projects)
 
     def _create_project(self, project: str) -> None:
         proc = self._run(
