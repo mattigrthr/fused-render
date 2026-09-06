@@ -681,9 +681,8 @@
   width: 108px;
   height: 108px;
   border-radius: 6px;
-  /* Always light, in both themes: a scanner wants dark-on-light, and inverting
-     a QR is the reliable way to make half the phones in a room fail. */
-  background: #fff;
+  /* Always light, in both themes — see --qr-paper in tokens.css. */
+  background: var(--qr-paper);
   shape-rendering: crispEdges;
 }
 

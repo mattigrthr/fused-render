@@ -428,8 +428,8 @@ function Address({
           role="img"
           aria-label={`QR code for ${displayUrl(url)}`}
         >
-          <rect width="100%" height="100%" fill="#fff" />
-          <path d={qrPath(matrix)} fill="#000" />
+          <rect width="100%" height="100%" fill="var(--qr-paper)" />
+          <path d={qrPath(matrix)} fill="var(--qr-ink)" />
         </svg>
       )}
       <div className="app-publish-address-body">

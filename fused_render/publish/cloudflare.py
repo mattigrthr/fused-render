@@ -150,6 +150,11 @@ class CloudflarePages:
                 cmd + args,
                 capture_output=True,
                 text=True,
+                # Pinned, not left to the locale: wrangler prints a project name
+                # the author chose, and a machine running under LANG=C would
+                # otherwise turn one accented character into a decode crash.
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 cwd=cwd,
                 env=env,
