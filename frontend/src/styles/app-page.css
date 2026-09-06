@@ -719,3 +719,167 @@
   gap: 8px;
   margin-top: 4px;
 }
+
+/* Fund cycles: the panel that stands where a disabled row with a paragraph
+   under it would be. One target on this page costs money rather than an
+   account, and "you have not funded a principal" needs its own affordance —
+   there is nothing to sign in to, so a greyed auth row would say nothing the
+   author can act on. */
+.app-publish-funding {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.app-publish-funding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-publish-funding-head p {
+  min-width: 0;
+}
+
+/* A principal and a transfer command: strings nobody retypes correctly, and one
+   of them moves money. Always shown with the copy button beside them. */
+.app-publish-copyfield {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-publish-copyfield > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-publish-copyfield code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  overflow-wrap: anywhere;
+}
+
+.app-publish-mono {
+  letter-spacing: 0.01em;
+}
+
+/* The seed phrase, shown once. Deliberately an inline panel and not a modal: a
+   modal that dismisses on a stray click is the wrong container for something
+   that cannot be shown again. Warm rather than red — the situation is
+   recoverable from the OS keyring, and an apocalyptic warning about a
+   recoverable situation is how you teach people to ignore warnings. */
+.app-publish-seed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  background: rgba(var(--warning-rgb), 0.07);
+}
+
+.app-publish-seed-lead {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning-strong);
+}
+
+.app-publish-seed-lead svg {
+  width: 15px;
+  height: 15px;
+}
+
+.app-publish-seed .app-publish-notes li {
+  color: var(--fg);
+}
+
+/* The phrase itself: big enough to transcribe by hand, because some people
+   will, and selectable as one run of text. */
+.app-publish-seed-phrase {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 14px;
+  line-height: 1.7;
+  word-spacing: 0.35em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Balance and idle burn, read as a runway. The tone escalates well before the
+   canister freezes: running out means frozen and eventually deleted with all
+   its state, which is not something to colour red on the last day. */
+.app-publish-cycles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.app-publish-cycles-figures {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-publish-cycles-figures strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-publish-cycles-low {
+  border-color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.07);
+}
+
+.app-publish-cycles-critical {
+  border-color: var(--error);
+  background: rgba(var(--error-rgb), 0.07);
+}
+
+.app-publish-cycles-warning {
+  flex: 1 1 100%;
+  order: 3;
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.app-publish-cycles-warning svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.app-publish-cycles-critical .app-publish-cycles-warning svg {
+  color: var(--error);
+}
