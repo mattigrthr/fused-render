@@ -181,3 +181,41 @@ def test_network_python_earns_a_cors_note(tmp_path):
     elig = scan(page)
     assert elig.pyodide_packages == ["requests"]
     assert any("CORS" in n for n in elig.notes)
+
+
+def test_an_unbacked_computed_asset_path_blocks_the_publish(tmp_path):
+    # The failure this test exists for: the app works locally, because the dev
+    # server hands out the whole folder, and then every deck 404s on the hosted
+    # origin. An export only warns — it may be handed to something that fills
+    # the gap — but a publish IS the hosting, so there is nothing left to fill it.
+    page = _app(
+        tmp_path,
+        "<html><script>s.src = fused.rawUrl(`data/hsk${n}.js`)</script></html>",
+        **{"data__hsk1.js": "window.HSK_DATA = {};"},
+    )
+    elig = scan(page)
+    assert not elig.publishable
+    blocker = next(b for b in elig.blockers if "computed path" in b)
+    assert "would miss for every reader" in blocker
+    # The remedy has to be one this page can actually offer. "Include files" is
+    # the export dialog's per-deployment picker, which Publish never sends and
+    # which would not travel with the app anyway.
+    assert "fused-bundle" in blocker
+    assert "Include files" not in blocker
+    assert not any("computed path" in n for n in elig.notes)
+
+
+def test_a_manifest_glob_clears_the_computed_asset_blocker(tmp_path):
+    # The fix, and the proof that the blocker is about what SHIPPED rather than
+    # about the call being computed: the glob is what puts the files in the site.
+    page = _app(
+        tmp_path,
+        '<html><head><script type="application/fused-bundle">\n'
+        '{ "include": ["data/*.js"] }\n'
+        "</script></head>"
+        "<script>s.src = fused.rawUrl(`data/hsk${n}.js`)</script></html>",
+        **{"data__hsk1.js": "window.HSK_DATA = {};"},
+    )
+    elig = scan(page)
+    assert elig.blockers == []
+    assert elig.publishable

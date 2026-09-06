@@ -63,10 +63,28 @@ the list of blocking problems are identical to what a publish would hit
 
 Some things are **notes**, not blockers, and they are the ones an author most
 needs before publishing rather than after: the app's Python source becomes part
-of the page and anyone can read it; a `fused.rawUrl()` on a computed path
-cannot be resolved by the exporter and the files it fetches must be declared;
-client-local state is each reader's alone and does not follow them to another
-device.
+of the page and anyone can read it; the app's Python reaches the network and is
+now subject to CORS; client-local state is each reader's alone and does not
+follow them to another device.
+
+One thing an export only warns about *is* a blocker here. A
+`fused.rawUrl()`/`readFile()` call on a **computed** path, with nothing bundled
+behind it, is advisory for an export — the bundle may be handed to something
+that fills the gap. A publish is the hosting, so nothing is left to fill it:
+
+```js
+s.src = fused.rawUrl(`data/hsk${n}.js`);   // the exporter cannot see this
+```
+
+Locally that works, because the dev server serves the whole folder. Published,
+every one of those files is absent. The remedy is one block in the page, which
+travels with the app instead of living in a per-deployment picker:
+
+```html
+<script type="application/fused-bundle">
+{ "include": ["data/*.js"] }
+</script>
+```
 
 ## What a publish actually builds
 
@@ -86,10 +104,12 @@ site/
     manifest.webmanifest
     pyodide/          the interpreter and every wheel in the closure
   fused-sw.js         offline cache
-  _headers
+  _headers            cache policy
+  _redirects          /* /404.html 404
+  404.html            the author's, if they shipped one
 ```
 
-Four things about it are load-bearing rather than incidental:
+Five things about it are load-bearing rather than incidental:
 
 **The Python harness lives outside the app tree.** `boot.py` and `_binding.py`
 are written to `/fused-runtime` in the browser filesystem, not to `/app`, and
@@ -111,6 +131,15 @@ works and then reaches for the network the moment a package has a dependency.
 **The service worker is at the site root.** A worker under `_fused/` gets scope
 `/_fused/` and cannot control the page; widening it needs a response header no
 static host will let a subdirectory set.
+
+**A missing file has to answer 404.** Cloudflare Pages answers an unknown path
+with the site's own `index.html` at HTTP **200**, so a file the author never
+bundled comes back as a page of HTML wearing the name that was asked for. A
+`<script src>` then fails on `nosniff` rather than on a status code, and
+`fetch(...).ok` is true for a file that does not exist — the app reports
+something inscrutable and the author debugs the wrong thing. The `_redirects`
+splat restores the miss. Static assets are matched first, so it only ever
+catches a real one.
 
 ## How state survives a re-publish
 

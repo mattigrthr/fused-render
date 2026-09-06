@@ -11248,9 +11248,18 @@ Full design: `docs/PUBLISH.md`.
   it loses a reader's data.
 - **PB-6** **Notes are not blockers**, and are the things an author needs
   before publishing rather than after: the app's Python source becomes part of
-  the page and is readable by anyone; a computed `fused.rawUrl()` path cannot be
-  resolved and its files must be declared (EX-4a/EX-8); client-local state is each
-  reader's own and does not follow them to another device.
+  the page and is readable by anyone; the app's Python reaches the network and
+  is now subject to CORS; client-local state is each reader's own and does not
+  follow them to another device.
+- **PB-6a** **An unbacked computed asset path is a blocker, not a note.** The
+  exporter only *warns* about a `fused.rawUrl()`/`readFile()` path it cannot
+  resolve statically with nothing bundled behind it (EX-4a/EX-8), because a
+  bundle may be handed to something that fills the gap. A publish IS the
+  hosting, so nothing is left to fill it: the app works locally, where the dev
+  server serves the whole folder, and then every one of those fetches misses on
+  the hosted origin. `publish/eligibility.scan` reclassifies that one warning
+  and rewrites it for this page — the manifest is the only remedy reachable from
+  Publish, and the only one that travels with the app.
 - **PB-7** **The published site is a bundle plus a runtime, and the runtime
   lives outside the app tree.** `publish/site.py` writes the payload verbatim at
   the site root (EX-1) and everything it adds under `_fused/`: `runtime.js` (the
@@ -11260,6 +11269,14 @@ Full design: `docs/PUBLISH.md`.
   indistinguishable from the reader's own files and is captured into their saved
   state. The service worker is at the SITE ROOT (`fused-sw.js`): a worker under
   `_fused/` has scope `/_fused/` and cannot control the page.
+- **PB-7a** **A missing file answers 404, not the app.** The site carries a
+  `_redirects` splat (`/* /404.html 404`) and a `404.html`, keeping the
+  author's own if one shipped. Cloudflare Pages otherwise answers an unknown
+  path with the site's own `index.html` at HTTP **200**, which is worse than a
+  plain miss: a `<script src>` for an unbundled file loads a page of HTML and
+  dies on `nosniff` instead of on a status code, and `fetch(...).ok` is true for
+  a file that does not exist. Static assets are matched before the rule, so it
+  only ever catches a genuine miss.
 - **PB-8** **`_binding.py` is copied verbatim into the site** and read the way
   the engine reads it (D167), so param coercion in a published app is the same
   code as param coercion locally. No JavaScript reimplementation.

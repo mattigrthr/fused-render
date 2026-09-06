@@ -45,7 +45,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 
-from fused_render.export import ExportPlan, plan_export
+from fused_render.export import UNRESOLVED_COMPUTED_ASSET, ExportPlan, plan_export
 from fused_render.publish.adapter import (
     RUNTIME_AXIS,
     STATE_AXIS,
@@ -284,7 +284,28 @@ def scan(html_path: str, *, include: list[str] | None = None, exclude: list[str]
 
     plan = plan_export(html, page_dir, include=include, exclude=exclude)
     blockers = list(plan.errors)
-    notes = list(plan.warnings)
+    notes: list[str] = []
+    for warning in plan.warnings:
+        # An unresolved computed asset path is advisory for an EXPORT — the author
+        # may be about to hand the bundle to something that fills the gap. For a
+        # PUBLISH it is fatal, and quietly so, which is the worst way to be fatal:
+        # the app works locally (the dev server hands out the whole folder), then
+        # every one of those fetches misses on the hosted origin. Nothing shipped
+        # to back the call, so there is no version of this publish that works.
+        if UNRESOLVED_COMPUTED_ASSET in warning:
+            # Rewritten rather than passed through: the export wording offers
+            # "Include files" as an alternative, and that per-deployment picker
+            # is not on this page — the manifest is the only route from here,
+            # and it is also the only one that travels with the app.
+            count = warning.split(UNRESOLVED_COMPUTED_ASSET)[0].strip()
+            blockers.append(
+                f"{count} {UNRESOLVED_COMPUTED_ASSET} and nothing in this publish "
+                "backs them, so those fetches would miss for every reader. Declare "
+                'the files in a <script type="application/fused-bundle"> manifest '
+                '({ "include": ["data/*.js"] }) in the page itself'
+            )
+        else:
+            notes.append(warning)
 
     # Surfaces the exporter lets through but no host can serve. Notes, not
     # blockers (see _LOCAL_ONLY_SURFACES): the author's `fused.env` branch may
