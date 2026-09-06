@@ -11207,12 +11207,13 @@ the rules around it.
   does not write itself, any UI that shows or clears an app's `.fused/`, and
   any `window.fused` accessor for the paths.
 
-## 48. Publish — An App on the Author's Own Hosting (D623)
+## 48. Publish — An App on the Author's Own Hosting (D623, D624)
 
 Export (§18, `docs/EXPORT.md`) produces a bundle and stops. §48 is the rest of
 the way: a bundle becomes a self-contained static site, an adapter hands that
-site to a provider the author is already signed into, and the author gets back
-one canonical URL that survives every re-publish. fused-render hosts nothing,
+site to a provider the author already has a relationship with — or, on ICP, to
+one that asks for no account at all — and the author gets back one canonical URL
+that survives every re-publish. fused-render hosts nothing,
 holds no account and never sees a token — the same relationship `mounts` has
 with rclone, and the reason §1's non-goal is untouched by this section.
 Full design: `docs/PUBLISH.md`.
@@ -11321,7 +11322,7 @@ Full design: `docs/PUBLISH.md`.
   is the deliberate escape hatch and deletes nothing at the provider — the old
   deployment stays up, which is exactly why the confirmation says the next
   publish mints a new address whose readers cannot see the old progress.
-- **PB-12** **`wrangler login`, never a token field.** The author approves in
+- **PB-12** **The provider's own auth, never a token field.** The author approves in
   their own browser and the credential lands in the provider CLI's config,
   which fused-render does not read. `auth()` is read-only and must never open a
   browser — it is called to draw a row. `login()` and `deploy` carry `X-Fused`
@@ -11350,7 +11351,72 @@ Full design: `docs/PUBLISH.md`.
   has no base class; `registry._adapters()` is the registration. A
   `PublishError` is shown to the author verbatim, so its message is written for
   them.
-- **PB-17** **Sequenced-after, deliberately absent here**: `runtime:cpython` and
+- **PB-17** **Funding is a publish precondition, not a fourth auth state**
+  (`adapter.FundedTarget`, D624). An ICP canister is paid for in cycles the
+  author transfers themselves, from their own terminal, with no account
+  anywhere to sign into — so the ICP adapter's `auth()` answers `ready` or
+  `unavailable` and nothing else, and the three-state enum needs no change.
+  Whether a target has a Fund cycles panel comes from the adapter's own SHAPE
+  (`isinstance(adapter, FundedTarget)`), never from a target id, so a provider
+  with nothing to fund cannot grow an empty panel. Three routes exist only for
+  such targets: `GET /api/publish/funding`, `POST /api/publish/identity`,
+  `GET /api/publish/cycles`.
+- **PB-18** **The publishing identity is created on the first Fund cycles
+  press, and it is one identity Fused-wide.** No wizard, no setup step, and no
+  key on the disk of somebody who never published to this target. One principal
+  and one balance, not one per app — funding a fresh principal for every app is
+  the friction that stops an author after the first. It is a machine-level key
+  for putting canisters on-chain, not an app login, and it lives in the OS
+  keyring: the only one of icp-cli's three storage modes that is both
+  non-interactive and not embarrassing. A keyring we cannot reach is an
+  `unavailable` with a reason, never a silent fall back to a plaintext key.
+- **PB-19** **The seed phrase is shown once and retained nowhere.** Read
+  through `--output-seed` into a `0600` file that is unlinked before the call
+  returns — deliberately not off stdout, which every failure path in these
+  adapters hands to a formatter that shows the author the whole captured blob.
+  It crosses the API boundary in exactly one response, is rendered by an inline
+  panel that nothing continues past until the author confirms, and is never put
+  in `localStorage`, `sessionStorage` or any state that outlives the flow. The
+  access log records the request line and never a body. *"Never a seed phrase
+  in a text field"* is about INPUT and still stands: printing one at creation is
+  output, happens once, and nothing retains it. The warning is serious without
+  being apocalyptic, because losing the phrase is not losing the cycles — the
+  signing key stays in the keyring and `icp identity export` emits a PEM at any
+  later time.
+- **PB-20** **A failure that minted the origin still records it**
+  (`PublishError.salvage`). `icp deploy` creates the canister — the origin, paid
+  for in real cycles — and only then uploads into it, so a failed upload leaves
+  a real canister id behind. Dropping it makes the retry mint a SECOND canister
+  at a second origin, which is PB-11's stranded-progress failure reached by way
+  of an error message. The adapter raises with the record, `runs.py` writes it
+  before reporting the failure, and the retry lands in place.
+- **PB-21** **Not enough cycles is surfaced as itself, never as CLI stderr.**
+  Checked twice: a pre-flight balance read before anything is spent, so the
+  common never-funded case never reaches a failed deploy; and the failure path,
+  because prices move and another app can drain the same principal in between.
+  Both give the author their principal, the transfer command and the funding
+  flow. A balance we could not READ is not zero and does not refuse the publish
+  — it lets the deploy report its own failure.
+- **PB-22** **The cycles readout is a runway, cached for a day.** Balance ÷
+  idle burn (`idle_cycles_burned_per_day`) is roughly how long the app survives
+  untouched, and a canister that runs out is frozen and eventually deleted with
+  all its state — a dead man's switch, stated next to the figure rather than
+  buried, with the tone escalating a month out rather than on the last day. The
+  reading is rebuildable by asking the provider again, so it is §47 *cache* and
+  lives in `<app>/.fused/cache/` (`publish/cycles.py`); the canister id is
+  §47 *data* and lives in the record. A stale reading is shown with its
+  timestamp rather than hidden.
+- **PB-23** **The ICP project is synthesized per publish, which makes the id
+  mapping ours.** `icp deploy` wants a project manifest and `site.py` produces a
+  bare directory, so a minimal `icp.yaml` is written to a temp dir and deleted
+  after — the author's app folder stays their content. icp-cli remembers a
+  canister id in the project's `.icp/data/mappings/ic.ids.json`, and that
+  project does not survive the publish, so the record is seeded back into that
+  file before a re-publish. Without it every re-publish would look like a first
+  one.
+- **PB-24** **Sequenced-after, deliberately absent here**: `runtime:cpython` and
   `state:server-backed`/`state:shared` adapters (rungs 2 and 3), custom domains,
-  any UI for deleting a deployment, and any integration with §36's Activity
-  dock — a publish reports itself on its own page.
+  any UI for deleting a deployment, a Buy cycles fiat onramp (the affordance is
+  in the right place; the transaction is not in scope), an Export identity (PEM)
+  button in Preferences, and any integration with §36's Activity dock — a
+  publish reports itself on its own page.

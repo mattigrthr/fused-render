@@ -58,14 +58,14 @@ fused-render/
 │   │       ├── env.py          # script-venv install loader: /api/env/install|progress|cancel (PY-18/D173)
 │   │       ├── jobs.py         # background-job registry: /api/jobs report|list|cancel|dismiss|clear (SPEC §36/D244)
 │   │       ├── export.py       # /api/export
-│   │       └── publish.py      # /api/publish/plan|auth|login|deploy|run|forget (SPEC §48/D623)
+│   │       └── publish.py      # /api/publish/plan|auth|login|deploy|run|forget|funding|identity|cycles (SPEC §48/D623/D624)
 │   ├── executor.py             # runner: in-process for first-party helpers, subprocess for user code (D72)
 │   ├── _child.py               # worker-process entry (subprocess path)
 │   ├── _binding.py             # param coercion shared by both execution paths
 │   ├── logs.py                 # rotating app log for 500 / right-click-open diagnostics (D68)
 │   ├── jobs.py                 # the background-job registry itself (in-memory, swept) — the download manager's model
 │   ├── publish/                # an app onto the author's OWN hosting (SPEC §48, docs/PUBLISH.md)
-│   │   ├── adapter.py          # the seam: the Capability grid, PublishAdapter, PublishError — nothing provider-specific
+│   │   ├── adapter.py          # the seam: the Capability grid, PublishAdapter, FundedTarget, PublishError — nothing provider-specific
 │   │   ├── eligibility.py      # which runtime/state cells an app needs, and what disqualifies it
 │   │   ├── registry.py         # the adapter set + the offer rule (set membership over the grid)
 │   │   ├── record.py           # .fused/data/publish.json — the app's own memory of where it lives
@@ -74,6 +74,8 @@ fused-render/
 │   │   ├── icon.py             # the author's icon.svg, or a generated lettermark
 │   │   ├── runs.py             # a publish as a polled background run, one per (app, target)
 │   │   ├── cloudflare.py       # the Cloudflare Pages adapter (drives the author's own wrangler)
+│   │   ├── icp.py              # the ICP asset-canister adapter (drives the author's own icp; no account anywhere)
+│   │   ├── cycles.py           # .fused/cache/publish-cycles.json — one balance reading a day, per app per target
 │   │   └── static/             # what ships INSIDE a published site: runtime.js, boot.py, sw.js
 │   ├── static/
 │   │   ├── shell-dist/         # Vite build of frontend/ (gitignored, D54; built by dev / packaging hook)

@@ -10,6 +10,10 @@ machine. It holds no account, mints no URL, sees no token, and pays for nothing.
 What it contributes is everything between "here is a folder of HTML and Python"
 and "here is a static site that runs that Python in a browser".
 
+One target takes that further: an ICP canister needs no provider account at
+*all* — no signup, no card, nobody who can close the author's account. It also
+costs money directly, which is why funding exists as its own idea below.
+
 ```
 Publish tab  ──►  /api/publish/*  ──►  publish/runs.py
                                           │
@@ -192,9 +196,14 @@ row, and a page that opens an OAuth window because you looked at it is a bug.
 `login()` is the only thing that can, and it is behind `X-Fused` for the same
 reason every mutating endpoint is.
 
+Not every target has an account, though. On ICP there is nobody to sign in to at
+all, so its `auth()` answers `ready` or `unavailable` and never `needs-login` —
+the three-state enum is unchanged, and what actually gates the publish there is
+**Funding**, below.
+
 ## The API
 
-Six routes, `fused_render/server/routers/publish.py`.
+Nine routes, `fused_render/server/routers/publish.py`.
 
 | route | |
 | --- | --- |
@@ -204,6 +213,13 @@ Six routes, `fused_render/server/routers/publish.py`.
 | `POST /api/publish/deploy` | starts a run; returns immediately. `X-Fused`. |
 | `GET /api/publish/run?path=&target=` | poll one. `null` is not an error. |
 | `POST /api/publish/forget` | stop treating a provider project as this app's. Deletes nothing at the provider. `X-Fused`. |
+| `GET /api/publish/funding?target=` | whether a target that costs money is paid for. Read-only — it must never create an identity. |
+| `POST /api/publish/identity` | mint the publishing identity. The one response that carries a seed phrase. `X-Fused`. |
+| `GET /api/publish/cycles?path=&target=` | the app's balance and burn. Cached a day; `refresh=true` forces a read. |
+
+The last three answer only for targets that implement `adapter.FundedTarget`.
+Anything else gets a 400 saying it does not need funding, which is a sentence
+rather than a shrug — see **Funding** below.
 
 A publish is a background **run** rather than a long request: the first one
 fetches a Python runtime and uploads over ten megabytes, and a request held
@@ -224,6 +240,18 @@ Publish page, the disabled rows with their reasons — already works for it. A
 `PublishError` you raise is shown to the author verbatim, so write the message
 for them.
 
+If the target costs the author money directly, also implement `FundedTarget`
+(`funding()`, `create_identity()`, `cycles(record)`). Nothing branches on your
+id: the Publish page draws a Fund cycles panel because `isinstance(adapter,
+FundedTarget)` is true, which is why a target with nothing to fund cannot end up
+with an empty one.
+
+If your provider mints the deployment's identity before the upload — a canister
+id, a project id you cannot re-derive from a name — raise your failures with
+`PublishError(..., salvage=PublishRecord(...))`. `runs.py` writes that record
+before reporting the failure, and the retry lands on the same origin instead of
+minting a second one.
+
 ## Cloudflare Pages, specifically
 
 Covers `runtime:js`, `runtime:pyodide`, `state:none`, `state:client-local`.
@@ -237,6 +265,100 @@ balanced JSON value, because wrangler prints a banner above its `--json`.
 The canonical URL is `https://<project>.pages.dev` — never the
 `<hash>.<project>.pages.dev` alias a deployment also mints, which would pin
 readers to a snapshot and split their saved progress across origins.
+
+## The Internet Computer, specifically
+
+Covers the same four cells as Cloudflare Pages: `runtime:js`,
+`runtime:pyodide`, `state:none`, `state:client-local`. It exists in the same
+rung for a reason — an adapter interface validated against exactly one backend
+is not a seam, it is that backend's assumptions with indirection in front.
+
+The CLI is found at `FUSED_RENDER_ICP`, then `icp` on `PATH`, then
+`npx --yes @icp-sdk/icp-cli@1`, then nothing. Not bundled into the payload the
+way rclone is: D459 already drew that line for ffmpeg, and a Rust binary one
+adapter's subprocess needs should not be carried by every install.
+
+`icp deploy` wants a project manifest and `site.py` produces a bare directory,
+so a minimal `icp.yaml` is synthesized in a temp dir per publish and deleted
+after — the author's app folder stays their content. That makes the canister-id
+mapping ours to keep: icp-cli records it in the project's
+`.icp/data/mappings/ic.ids.json`, our project does not survive the publish, and
+the record is seeded back into that file before a re-publish. Without it every
+re-publish looks like a first one, mints a new canister, and strands every
+reader's saved progress on an origin nobody will visit again.
+
+The canonical URL is `https://<canister-id>.icp0.io`. Each canister gets its own
+subdomain and therefore its own origin, which for a `state:client-local` app is
+exactly what you want.
+
+Two things are worth stating plainly because they are easy to get wrong:
+
+- **Pyodide's WebAssembly and the canister's WebAssembly never meet.** The first
+  runs in the reader's browser, the second on-chain. At this rung the canister
+  is a file server and knows nothing about Python.
+- **We only ever target mainnet** (`-e ic`) and never start a local replica,
+  which is the only thing the install guide's Docker/WSL note is about.
+
+## Funding
+
+There is nobody to sign in to on ICP, so `auth()` answers `ready` or
+`unavailable` and nothing else. What gates a publish is cycles, and cycles are
+not an auth state: the author transfers them themselves, from their own
+terminal, and no account exists that we could sign into on their behalf. So
+funding is its own Protocol with its own button.
+
+**One identity, Fused-wide, created on the first Fund cycles press.** No wizard,
+no setup step, no key on the disk of somebody who never published here. One
+principal and one balance — funding a fresh principal per app is the friction
+that stops an author after their first. It is a machine-level key for putting
+canisters on-chain, not an app login, and it lives in the OS keyring. The other
+two storage modes icp-cli offers are a password prompt on every publish and a
+key that moves real money sitting in a readable file; a keyring we cannot reach
+is an `unavailable` with a reason, never a silent fall back to either.
+
+**The seed phrase is shown once and retained nowhere.** It is read through
+`--output-seed` into a `0600` file that is unlinked before the call returns —
+deliberately not off stdout, because every failure path here hands the whole
+captured blob to the author, and a phrase on stdout is one bad exit away from an
+error message, a log, and a pasted issue report. It crosses the API boundary in
+exactly one response, is rendered by an inline panel nothing continues past
+until the author confirms, and is never written to browser storage. The access
+log records the request line and never a body.
+
+*"Never a seed phrase in a text field"* is about input and still holds: we never
+ask anyone to paste one in. Printing one at creation is output, it happens once,
+and nothing keeps it.
+
+**Losing it is not losing the cycles**, which is what sets how alarming the copy
+should be. The signing key stays in icp-cli's keyring and `icp identity export`
+emits a PEM at any later time, importable anywhere. Clicking past the phrase
+loses mnemonic-shaped portability, not access. The genuinely unrecoverable case
+— the phrase and the keyring both gone, a wiped machine with no backup — gets
+one sentence. An apocalyptic warning about a recoverable situation is how you
+teach people to ignore warnings.
+
+**Not enough cycles is checked twice.** A pre-flight balance read before
+anything is spent, so the common never-funded case never reaches a failed
+deploy; and the failure path handled as itself, because prices move, payloads
+grow, and another app can drain the same principal in between. Both give the
+author their principal, the transfer command and the funding flow — never the
+CLI's raw stderr. A balance we could not *read* is not zero: it lets the deploy
+try and report its own failure rather than refusing a publish already paid for.
+
+**A partial failure must not cost the author their origin.** `icp deploy`
+creates the canister and then uploads into it, so an upload that runs out leaves
+a real canister that real cycles paid for. The adapter raises with a salvage
+record, `runs.py` writes it before reporting the failure, and the retry finishes
+that same canister at that same address.
+
+**The cycles readout is a runway.** Balance ÷ `idle_cycles_burned_per_day` is
+roughly how many days the app survives untouched, and a canister that runs out
+is frozen and eventually deleted with all its state. That is a dead man's switch
+on the author's app, so it sits next to the figure and the tone escalates a
+month out rather than on the last day. The reading is rebuildable by asking
+again, so it is cache (§47) in `<app>/.fused/cache/`, refreshed at most once a
+day; a stale one is shown with its timestamp rather than hidden, because a
+number with an "as of" beats a spinner.
 
 ## Verifying a publish
 
@@ -252,3 +374,23 @@ The last one is why the manifest and `apple-touch-icon` are not decoration: iOS
 Safari deletes script-writable storage after seven days without interaction,
 and a home-screen app is exempt. For an app whose whole value is a month of
 accumulated review history, the manifest is what makes the storage durable.
+
+On ICP, also:
+
+- publishing works on a machine with no `icp` installed, through the npx
+  fallback alone
+- an identity created through the npx fallback is still found after a real `icp`
+  is installed — icp-cli's keyring service name should be a property of the tool
+  rather than of how it was invoked, and the failure mode is an author who
+  appears to have lost their principal after tidying up their machine
+- re-publishing an app twice lands on the same canister id both times
+- a publish attempted on an unfunded principal says so in words and opens the
+  funding flow, rather than failing with CLI output
+- an upload that fails after canister creation leaves the canister id recorded,
+  and the retry reuses it
+- the cycles readout survives a restart without a second network call
+- the phrase shown at creation actually recovers the identity:
+  `icp identity import --read-seed-phrase` into a clean install yields the same
+  principal
+- after a creation, the phrase appears nowhere — not in the state dir, the logs,
+  our keyring, or browser storage
