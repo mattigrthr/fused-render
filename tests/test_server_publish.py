@@ -11,8 +11,10 @@ tests (``test_publish_cloudflare.py``); what these tests need is a target that
 finishes instantly, so the contract under test is the HTTP one.
 """
 
+import logging
 import os
 import time
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +23,11 @@ from fused_render.publish import runs
 from fused_render.publish.adapter import (
     AuthState,
     Capability,
+    CyclesReading,
+    FundingState,
+    IdentityCreated,
+    PublishError,
+    PublishRecord,
     PublishResult,
 )
 from fused_render.server import create_app
@@ -115,7 +122,13 @@ def _await_run(client, path, target="cloudflare-pages", timeout=30):
 
 
 @pytest.mark.parametrize(
-    "route", ["/api/publish/login", "/api/publish/deploy", "/api/publish/forget"]
+    "route",
+    [
+        "/api/publish/login",
+        "/api/publish/deploy",
+        "/api/publish/forget",
+        "/api/publish/identity",
+    ],
 )
 def test_the_mutating_routes_need_x_fused(tmp_path, route):
     # login opens an OAuth window and deploy spends the author's bandwidth:
@@ -322,3 +335,250 @@ def test_polling_an_app_nobody_published_is_not_an_error(tmp_path, app_dir, fake
         .json()
     )
     assert body["run"] is None
+
+
+# ---- funding: the three routes only a paid-for target answers -----------------
+#
+# An ICP canister costs cycles the author transfers themselves, from their own
+# terminal, with no account anywhere to sign into. That is not authentication and
+# is not modelled as an AuthState, so it has its own routes — guarded by the
+# `FundedTarget` Protocol rather than by a target id, which is what stops the
+# Publish page growing an empty funding panel for a provider with nothing to
+# fund.
+
+
+class _FakeFunded(_Fake):
+    """A target that costs money. Same publish, three more questions."""
+
+    id = "icp-canister"
+    label = "Internet Computer"
+    identity = None
+    balance = 0
+    created = 0
+
+    def auth(self):
+        # No login for this one, ever: there is nobody to log in to.
+        return AuthState(status="ready", account=self.identity)
+
+    def funding(self):
+        return FundingState(
+            funded=self.balance >= 1_000_000_000_000,
+            identity=self.identity is not None,
+            principal=self.identity,
+            balance=self.balance if self.identity else None,
+            minimum=1_000_000_000_000,
+            transfer_command=(
+                f"icp cycles transfer 1T {self.identity} -n ic" if self.identity else None
+            ),
+            detail="fund me",
+        )
+
+    def create_identity(self):
+        self.created += 1
+        self.identity = "un4fu-tqaaa-aaaab-qadjq-cai"
+        return IdentityCreated(principal=self.identity, seed_phrase=SEED)
+
+    def cycles(self, record):
+        self.reads = getattr(self, "reads", 0) + 1
+        return CyclesReading(
+            balance=3_000_000_000_000,
+            idle_burned_per_day=100_000_000_000,
+            read_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+
+    #: Set to fail the way this target fails: the canister is minted, the upload
+    #: then runs out of cycles, and the id is real and paid for either way.
+    fail_upload = False
+
+    def publish(self, site_dir, *, name, record):
+        if self.fail_upload:
+            raise PublishError(
+                "not enough cycles to finish the upload",
+                salvage=PublishRecord(
+                    target=self.id,
+                    project=name,
+                    url=CANISTER_URL,
+                    extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+                ),
+            )
+        return PublishResult(
+            url=CANISTER_URL,
+            project=name,
+            updated_in_place=record is not None,
+            extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+        )
+
+
+SEED = "silk marble tunnel harvest cobalt errand willow ledger"
+CANISTER_URL = "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.icp0.io"
+
+
+@pytest.fixture
+def funded_target(monkeypatch):
+    target = _FakeFunded()
+    monkeypatch.setattr("fused_render.publish.registry._adapters", lambda: (target,))
+    monkeypatch.setattr(
+        "fused_render.publish.site._vendor_pyodide",
+        lambda runtime_dir, packages, *, needed: [],
+    )
+    return target
+
+
+def test_a_target_that_needs_no_funding_says_so_rather_than_faking_a_panel(
+    tmp_path, fake_target
+):
+    body = _client(tmp_path).get("/api/publish/funding", params={"target": "cloudflare-pages"})
+    assert body.status_code == 400
+    assert "does not need funding" in body.json()["error"]
+
+
+def test_the_plan_says_which_targets_have_funding_at_all(tmp_path, app_dir, funded_target):
+    plan = _client(tmp_path).get("/api/publish/plan", params={"path": str(app_dir)}).json()
+    (target,) = plan["targets"]
+    assert target["funding"] is True
+    # And no reading yet, because nothing has been published or fetched.
+    assert target["cycles"] is None
+
+
+def test_reading_the_funding_state_never_creates_an_identity(tmp_path, funded_target):
+    body = _client(tmp_path).get("/api/publish/funding", params={"target": "icp-canister"}).json()
+    assert body["identity"] is False and body["funded"] is False
+    # A key on the author's disk is not a side effect of drawing a panel.
+    assert funded_target.created == 0
+
+
+def test_creating_the_identity_needs_x_fused(tmp_path, funded_target):
+    # It mints a credential in the author's OS keyring. A page in a tab must not
+    # be able to do that because it was visited.
+    resp = _client(tmp_path).post("/api/publish/identity", json={"target": "icp-canister"})
+    assert resp.status_code == 403
+    assert funded_target.created == 0
+
+
+def test_the_seed_phrase_crosses_the_boundary_exactly_once(tmp_path, funded_target):
+    client = _client(tmp_path)
+    created = client.post(
+        "/api/publish/identity", json={"target": "icp-canister"}, headers=HEADERS
+    ).json()
+    assert created["seed_phrase"] == SEED
+    assert created["principal"] == "un4fu-tqaaa-aaaab-qadjq-cai"
+    # No later call can recover it: funding reports the principal and the
+    # balance and has no way to say the phrase again.
+    later = client.get("/api/publish/funding", params={"target": "icp-canister"}).json()
+    assert SEED not in str(later)
+    assert later["identity"] is True
+    assert later["principal"] == created["principal"]
+
+
+def test_the_access_log_records_the_request_line_and_never_the_body(
+    tmp_path, funded_target, caplog
+):
+    # The phrase is in exactly one response body. This server's access log
+    # records method, path, status and duration and no body at all
+    # (server/common.no_cache_and_log) — a property to hold on purpose, since
+    # the whole point of not storing the phrase is undone by logging it.
+    with caplog.at_level(logging.INFO):
+        _client(tmp_path).post(
+            "/api/publish/identity", json={"target": "icp-canister"}, headers=HEADERS
+        )
+    assert any("/api/publish/identity" in r.getMessage() for r in caplog.records)
+    assert not any(SEED in r.getMessage() for r in caplog.records)
+
+
+def test_the_cycles_readout_is_cached_and_not_refetched_on_every_load(
+    tmp_path, app_dir, funded_target
+):
+    client = _client(tmp_path)
+    client.post(
+        "/api/publish/deploy",
+        json={"path": str(app_dir), "target": "icp-canister"},
+        headers=HEADERS,
+    )
+    _await_run(client, str(app_dir), target="icp-canister")
+
+    params = {"path": str(app_dir), "target": "icp-canister"}
+    first = client.get("/api/publish/cycles", params=params).json()
+    assert first["cycles"]["balance"] == 3_000_000_000_000
+    # Balance ÷ idle burn: the runway is the number, the balance is the detail.
+    assert first["cycles"]["days_left"] == 30
+    assert first["cycles"]["fresh"] is True
+
+    client.get("/api/publish/cycles", params=params)
+    assert funded_target.reads == 1  # the second load painted the cached one
+
+    client.get("/api/publish/cycles", params={**params, "refresh": True})
+    assert funded_target.reads == 2
+
+    # And the plan hands the cached reading to the page on first paint, without
+    # running a provider CLI of its own.
+    plan = client.get("/api/publish/plan", params={"path": str(app_dir)}).json()
+    assert plan["targets"][0]["cycles"]["balance"] == 3_000_000_000_000
+    assert funded_target.reads == 2
+
+
+def test_a_refresh_that_fails_keeps_the_last_reading_rather_than_blanking_it(
+    tmp_path, app_dir, funded_target, monkeypatch
+):
+    client = _client(tmp_path)
+    client.post(
+        "/api/publish/deploy",
+        json={"path": str(app_dir), "target": "icp-canister"},
+        headers=HEADERS,
+    )
+    _await_run(client, str(app_dir), target="icp-canister")
+    params = {"path": str(app_dir), "target": "icp-canister"}
+    client.get("/api/publish/cycles", params=params)
+
+    def boom(self, record):
+        raise PublishError("could not reach the network")
+
+    monkeypatch.setattr(_FakeFunded, "cycles", boom)
+    body = client.get("/api/publish/cycles", params={**params, "refresh": True}).json()
+    # A runway with an "as of" on it beats an empty panel, and the balance is
+    # exactly the number an author should not lose sight of.
+    assert body["cycles"]["balance"] == 3_000_000_000_000
+    assert "could not reach the network" in body["error"]
+
+
+def test_an_app_that_was_never_published_has_no_balance_to_read(
+    tmp_path, app_dir, funded_target
+):
+    body = _client(tmp_path).get(
+        "/api/publish/cycles", params={"path": str(app_dir), "target": "icp-canister"}
+    ).json()
+    assert body["cycles"] is None
+    assert not hasattr(funded_target, "reads")
+
+
+def test_a_publish_that_fails_after_minting_the_origin_records_it_anyway(
+    tmp_path, app_dir, funded_target
+):
+    # The whole reason PublishError carries a salvage record. The canister
+    # exists and cost real cycles; a retry that forgot it would mint a second
+    # one at a second origin and strand every reader's saved progress behind an
+    # address nobody will open again.
+    funded_target.fail_upload = True
+    client = _client(tmp_path)
+    client.post(
+        "/api/publish/deploy",
+        json={"path": str(app_dir), "target": "icp-canister"},
+        headers=HEADERS,
+    )
+    run = _await_run(client, str(app_dir), target="icp-canister")
+    assert run["state"] == "error"
+    assert "not enough cycles" in run["error"]
+
+    plan = client.get("/api/publish/plan", params={"path": str(app_dir)}).json()
+    assert plan["targets"][0]["published"]["url"] == CANISTER_URL
+
+    # …and the retry lands on that same canister rather than minting another.
+    funded_target.fail_upload = False
+    client.post(
+        "/api/publish/deploy",
+        json={"path": str(app_dir), "target": "icp-canister"},
+        headers=HEADERS,
+    )
+    run = _await_run(client, str(app_dir), target="icp-canister")
+    assert run["state"] == "done"
+    assert run["result"]["updated_in_place"] is True
+    assert run["result"]["url"] == CANISTER_URL
