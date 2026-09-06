@@ -11383,6 +11383,12 @@ Full design: `docs/PUBLISH.md`.
   being apocalyptic, because losing the phrase is not losing the cycles — the
   signing key stays in the keyring and `icp identity export` emits a PEM at any
   later time.
+- **PB-19a** **A record that names no canister refuses, it does not re-mint.**
+  On Cloudflare the origin is derived from the project name, so a lost record is
+  recoverable; on ICP the id is assigned by the network and nothing derives it,
+  so a record we cannot read means we do not know which canister is this app's.
+  The adapter stops with the consequence named, exactly as Cloudflare does when
+  its recorded project is gone — Forget is the deliberate escape hatch.
 - **PB-20** **A failure that minted the origin still records it**
   (`PublishError.salvage`). `icp deploy` creates the canister — the origin, paid
   for in real cycles — and only then uploads into it, so a failed upload leaves

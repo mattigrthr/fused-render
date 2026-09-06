@@ -506,3 +506,15 @@ def test_a_record_extra_we_cannot_read_is_no_canister_at_all(value):
         extra={"canister_id": value},
     )
     assert Icp._recorded_id(record) is None
+
+
+def test_a_record_that_names_no_canister_stops_rather_than_minting_a_new_origin(funded, site):
+    # The ICP twin of Cloudflare's "that project no longer exists". Here the id
+    # is the origin and nothing derives it from the app's name, so a record we
+    # cannot read means we do not know which canister is this app's — and
+    # deploying anyway would silently give every reader a new address whose
+    # saved progress the old one cannot see.
+    record = PublishRecord(target="icp-canister", project="demo", url="https://x.icp0.io")
+    with pytest.raises(PublishError, match="does not name a canister"):
+        Icp().publish(site, name="demo", record=record)
+    assert not any(c[:1] == ["deploy"] for c in funded.read()["calls"])

@@ -402,6 +402,21 @@ class Icp:
 
         canister = record.project if record else canister_name(name)
         existing_id = self._recorded_id(record)
+        if record is not None and existing_id is None:
+            # The app is recorded as published here, but the record does not name
+            # a canister we can read. Deploying anyway would mint a SECOND one —
+            # a new id, a new origin, and every reader's saved progress stranded
+            # behind an address nobody will open again, with nothing on the
+            # author's side looking wrong. Cloudflare refuses the same way when
+            # its recorded project is gone: loudly, with the consequence named.
+            raise PublishError(
+                f"this app is recorded as published to the Internet Computer as "
+                f"{record.project!r}, but the record does not name a canister. Publishing "
+                "again would create a new one at a new address — and anyone using the old "
+                "address would lose the progress saved in their browser. Find the canister "
+                "with `icp canister status`, or choose Forget this deployment and publish "
+                "fresh if it really is gone."
+            )
 
         # Pre-flight. The common case — an author who never funded, or who has
         # drifted to zero since last time — should never reach a failed deploy
