@@ -160,7 +160,18 @@ export default function AppPublish({ dir }: { dir: string }) {
           setRuns((prev) => ({ ...prev, [r.target]: run }));
           // A finished publish changes what the page knows about the app: the
           // record it now has, and the address under the row.
-          if (run.state !== "running") reload();
+          if (run.state !== "running") {
+            const plan = await reload();
+            // A first publish is also the first moment there is a canister to
+            // read a balance from, and the runway is the number the author most
+            // needs after spending cycles. Asking here rather than waiting for
+            // the next page load.
+            const t = plan?.targets.find((x) => x.id === r.target);
+            if (t?.funding && t.published)
+              fetchCycles(dir, r.target)
+                .then(({ cycles: c }) => setCycles((prev) => ({ ...prev, [r.target]: c })))
+                .catch(() => {});
+          }
         } catch {
           // A poll that fails is a poll; the next one is 500 ms away and the
           // run is on the server either way.
