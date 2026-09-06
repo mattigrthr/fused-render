@@ -22,6 +22,11 @@ The pieces, in the order a publish goes through them:
   page back the portable subset of ``window.fused``.
 * ``adapter`` — the interface a provider implements.
 * ``cloudflare`` — the first one: Cloudflare Pages, via ``wrangler``.
+* ``icp`` — the second: an Internet Computer asset canister, via ``icp``. The
+  only target with no provider account at all, and the one that proves the
+  adapter interface is a seam rather than Cloudflare's assumptions with
+  indirection in front.
+* ``cycles`` — the daily-refreshed balance readout a funded target has.
 * ``record`` — what the app remembers so the NEXT publish lands on the same
   origin, which is what keeps every reader's saved progress.
 """
@@ -29,6 +34,10 @@ The pieces, in the order a publish goes through them:
 from fused_render.publish.adapter import (  # noqa: F401
     AuthState,
     Capability,
+    CyclesReading,
+    FundedTarget,
+    FundingState,
+    IdentityCreated,
     PublishAdapter,
     PublishError,
     PublishRecord,
@@ -40,7 +49,11 @@ from fused_render.publish.registry import Verdict, get, targets, verdict  # noqa
 __all__ = [
     "AuthState",
     "Capability",
+    "CyclesReading",
     "Eligibility",
+    "FundedTarget",
+    "FundingState",
+    "IdentityCreated",
     "PublishAdapter",
     "PublishError",
     "PublishRecord",

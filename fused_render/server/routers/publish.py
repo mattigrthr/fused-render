@@ -1,6 +1,6 @@
 """Routes behind Publish — the app's own hosting, on the author's infrastructure.
 
-Five endpoints, and they map one-to-one onto what the Publish page can do:
+Nine endpoints, and they map one-to-one onto what the Publish page can do:
 
   GET  /api/publish/plan     what this app needs, which targets take it, what
                              it is already published to
@@ -10,16 +10,26 @@ Five endpoints, and they map one-to-one onto what the Publish page can do:
   POST /api/publish/deploy   start a publish; returns immediately with a run
   GET  /api/publish/run      poll one
   POST /api/publish/forget   stop treating a provider project as this app's
+  GET  /api/publish/funding  whether a target that costs money is paid for
+  POST /api/publish/identity mint the publishing identity — the one response
+                             that carries a seed phrase, once
+  GET  /api/publish/cycles   the app's balance and burn, cached for a day
+
+The last three exist only for targets that implement ``adapter.FundedTarget``
+(an ICP canister is paid for in cycles the author transfers themselves, with no
+account anywhere to sign into). They are guarded by that Protocol rather than by
+a target id, so a provider without funding answers 400 instead of pretending.
 
 The server does not host, authenticate or bill anything here; it drives the
 author's own provider CLI on the author's own machine. Same posture as
 ``mounts``: local orchestration of a tool that holds its own credentials.
 
-``X-Fused`` is required on the mutating three, like every other mutating
-endpoint. ``login`` and ``deploy`` are also the two that reach the network, so
-they carry it for the reason the header exists: a page in a browser tab must not
-be able to make this app spend the author's bandwidth, or open an OAuth window,
-because it was visited.
+``X-Fused`` is required on the mutating four, like every other mutating
+endpoint. ``login``, ``deploy`` and ``identity`` are also the ones with a cost
+outside this process, so they carry it for the reason the header exists: a page
+in a browser tab must not be able to make this app spend the author's bandwidth,
+open an OAuth window, or mint a key in their OS keyring, because it was
+visited.
 
 Every route hands ``PublishError``'s message back verbatim as a 400. Those
 messages are written for the author and shown unmodified in the UI — see
@@ -30,7 +40,7 @@ import os
 
 from fastapi import APIRouter, Body, Header
 
-from fused_render.publish.adapter import PublishError
+from fused_render.publish.adapter import FundedTarget, PublishError
 from fused_render.server.common import _error, _require_fused
 
 router = APIRouter()
@@ -197,3 +207,132 @@ def api_publish_forget(body: dict = Body(...), x_fused: str | None = Header(defa
     from fused_render.publish import record
 
     return {"forgotten": record.forget(app_dir, body.get("target") or "")}
+
+
+def _funded(target: object):
+    """The adapter for ``target``, if it is one that costs money.
+
+    Two ways to fail and they are different: a target id nobody has heard of is
+    the same 404-shaped mistake every other route reports, while a real target
+    that simply has nothing to fund is a page asking a question that does not
+    apply to it. Both are 400s with their own sentence rather than a shrug.
+    """
+    from fused_render.publish import registry
+
+    try:
+        adapter = registry.get(target or "")
+    except KeyError:
+        return None, _error(f"no publish target named {target!r}")
+    if not isinstance(adapter, FundedTarget):
+        return None, _error(f"{adapter.label} does not need funding")
+    return adapter, None
+
+
+@router.get("/api/publish/funding")
+def api_publish_funding(target: str = ""):
+    """Whether this target is paid for, and what the author does if not.
+
+    Read-only and side-effect-free, like ``auth``: it is called to draw a panel.
+    In particular it must never create an identity — that is a key on the
+    author's disk, and it happens on an explicit press and nowhere else.
+    """
+    adapter, bad = _funded(target)
+    if bad is not None:
+        return bad
+    try:
+        state = adapter.funding()
+    except PublishError as exc:
+        return _error(str(exc))
+    return {
+        "target": adapter.id,
+        "funded": state.funded,
+        "identity": state.identity,
+        "principal": state.principal,
+        "balance": state.balance,
+        "minimum": state.minimum,
+        "transfer_command": state.transfer_command,
+        "detail": state.detail,
+        "help_url": state.help_url,
+    }
+
+
+@router.post("/api/publish/identity")
+async def api_publish_identity(
+    body: dict = Body(...), x_fused: str | None = Header(default=None)
+):
+    """Create the publishing identity. **The one response that carries a seed
+    phrase**, and the only time it exists.
+
+    The phrase is printed by the provider CLI at creation and never again.
+    fused-render shows it once and forgets it: it is not written to the record,
+    not put in a keyring of ours, and not stored by the client. The response
+    body is not logged — this server's access log records method, path, status
+    and duration and never a body (``server/common.no_cache_and_log``), which is
+    a property to keep rather than a coincidence to rely on quietly.
+
+    ``X-Fused`` because this mints a credential on the author's machine and
+    touches their OS keyring. A page in a tab must not be able to do that
+    because it was visited.
+
+    Runs on the threadpool: the keyring can put a system prompt in front of the
+    author, and waiting for them on the event loop stalls the whole app.
+    """
+    guard = _require_fused(x_fused)
+    if guard is not None:
+        return guard
+    adapter, bad = _funded(body.get("target"))
+    if bad is not None:
+        return bad
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        created = await run_in_threadpool(adapter.create_identity)
+    except PublishError as exc:
+        return _error(str(exc))
+    return {
+        "target": adapter.id,
+        "principal": created.principal,
+        # Shown once, then dropped by both sides. No other route returns it and
+        # no later call can recover it.
+        "seed_phrase": created.seed_phrase,
+    }
+
+
+@router.get("/api/publish/cycles")
+async def api_publish_cycles(path: str = "", target: str = "", refresh: bool = False):
+    """This app's balance and idle burn, cached for a day.
+
+    Serves the cached reading unless it is stale or ``refresh`` is set, because
+    the number is a network round trip that does not move meaningfully between
+    two page loads. A refresh that fails returns the OLD reading with the error
+    beside it rather than an empty panel: a runway with an "as of" on it is
+    worth more than nothing, and the balance is exactly the number an author
+    should not lose sight of.
+    """
+    app_dir, bad = _abs(path, "path")
+    if bad is not None:
+        return bad
+    adapter, bad = _funded(target)
+    if bad is not None:
+        return bad
+    from starlette.concurrency import run_in_threadpool
+
+    from fused_render.publish import cycles as cycles_cache
+    from fused_render.publish import record, runs
+
+    cached = cycles_cache.load(app_dir, adapter.id)
+    if not refresh and cycles_cache.is_fresh(cached):
+        return {"target": adapter.id, "cycles": runs.cycles_reading(app_dir, adapter.id)}
+    rec = record.load(app_dir, adapter.id)
+    if rec is None:
+        return {"target": adapter.id, "cycles": None}
+    try:
+        reading = await run_in_threadpool(adapter.cycles, rec)
+    except PublishError as exc:
+        return {
+            "target": adapter.id,
+            "cycles": runs.cycles_reading(app_dir, adapter.id),
+            "error": str(exc),
+        }
+    cycles_cache.save(app_dir, adapter.id, reading)
+    return {"target": adapter.id, "cycles": runs.cycles_reading(app_dir, adapter.id)}

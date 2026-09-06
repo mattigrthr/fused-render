@@ -15,7 +15,7 @@ provider CLI's own config, never in ours. The in-repo precedent is ``mounts``:
 we ship the rclone adapter, rclone holds the remote's credentials, and Fused
 never runs the storage.
 
-Three vocabularies meet here.
+Four vocabularies meet here.
 
 **Capability** — where a target sits on the runtime × state grid (parent issue).
 An adapter declares the cells it covers as :class:`Capability`; the eligibility
@@ -37,6 +37,13 @@ identity, so the adapter updates that project in place. **Origin stability is
 the contract, not an optimization** — a rung-1 app's whole state story is
 ``localStorage``, which is origin-scoped, so a publish that minted a new origin
 would silently wipe every viewer's progress.
+
+**Funding** — :class:`FundedTarget`, a second Protocol for the targets that cost
+the author money directly rather than through a plan. An ICP canister is paid
+for in cycles, transferred by the author from their own terminal, with no
+account anywhere to sign into. That is not authentication and must not be
+squeezed into :class:`AuthState`: it is a publish precondition with its own
+button, asked only of adapters that implement it.
 """
 
 from __future__ import annotations
@@ -119,7 +126,23 @@ class PublishError(Exception):
     as ``ExportError`` does for the build step. Anything the author cannot act on
     (a bug here, a broken install) should raise its own exception type instead
     and surface as a 500 with a traceback in the log.
+
+    ``salvage`` is the exception to "a failure changed nothing". Some providers
+    mint the deployment's identity *before* the upload that fails — an ICP
+    canister id is created, paid for with real cycles, and only then loaded with
+    assets. That id is the app's origin. If it is dropped on the way out, the
+    retry mints a SECOND canister at a SECOND origin and every reader's saved
+    progress is orphaned by way of an error message. An adapter that gets that
+    far therefore raises with the record it created, and ``runs.py`` writes it
+    before reporting the failure.
     """
+
+    def __init__(self, message: str, *, salvage: "PublishRecord | None" = None):
+        super().__init__(message)
+        #: Provider identity that came into existence before this failure and
+        #: must be remembered anyway. ``None`` for every failure that left
+        #: nothing behind, which is most of them.
+        self.salvage = salvage
 
 
 @dataclass(frozen=True)
@@ -238,4 +261,137 @@ class PublishAdapter(Protocol):
         update that same project rather than mint a new one (see
         :class:`PublishRecord` on why the origin is load-bearing).
         """
+        ...
+
+
+# ---- funding: a publish precondition that is not an auth state ---------------
+#
+# Some targets have nothing to log in to and still cannot be published to yet.
+# An ICP canister is paid for in cycles the author transfers themselves, out of
+# band, from their own terminal; there is no account to sign into and no
+# credential we could hold even if we wanted to. Modelling that as a fourth
+# `AuthState` would be wrong twice over — it is not authentication, and a
+# disabled row saying "not signed in" gives the author no way to act.
+#
+# So funding is its own question, asked of the targets that have it, with its
+# own affordance on the Publish page. A target that needs no funding simply does
+# not implement `FundedTarget` and nothing about it changes.
+
+
+@dataclass(frozen=True)
+class FundingState:
+    """Whether this target has been paid for, and what the author does about it.
+
+    ``identity`` is separate from ``funded`` because they fail in different
+    places: with no identity there is nowhere to send money, and the first press
+    of Fund cycles is what creates one. That press is also the only moment the
+    seed phrase exists (:class:`IdentityCreated`), which is why the identity is
+    minted on demand rather than at install time — nobody who never publishes to
+    this target should have a key on their disk.
+    """
+
+    #: True once there is enough to publish with. The Publish button is gated on
+    #: this in addition to :class:`AuthState`.
+    funded: bool
+    #: Whether an identity exists at all. False means Fund cycles will make one.
+    identity: bool
+    #: The identity's principal — where the author sends cycles. Shown with a
+    #: copy button, because it is a 60-character string nobody retypes.
+    principal: str | None = None
+    #: What the provider says is there now, in the provider's own smallest unit.
+    balance: int | None = None
+    #: What it takes to publish once. Shown so the author is not guessing.
+    minimum: int = 0
+    #: The exact command to run, principal already substituted. The transfer
+    #: happens in the author's own terminal — we never move their money.
+    transfer_command: str | None = None
+    #: One sentence for the panel, in the author's terms.
+    detail: str = ""
+    #: Where the provider documents funding.
+    help_url: str | None = None
+
+
+@dataclass(frozen=True)
+class IdentityCreated:
+    """The one moment a seed phrase exists, and the response that carries it.
+
+    Printed by the provider CLI at creation and never again. fused-render shows
+    it once and forgets it: no keyring item of ours, no file that outlives the
+    call, nothing in the record. Storing it would make us the custodian of a
+    portable, unrevokable credential that moves real money, which is the one
+    thing the publish seam is built not to be.
+
+    Losing it is not losing the funds — the signing key stays in the provider
+    CLI's own keyring and can be exported from there — so the warning around it
+    should be serious without being apocalyptic.
+    """
+
+    principal: str
+    #: Shown once, then dropped. Never persisted, never logged, never returned
+    #: by any other call.
+    seed_phrase: str
+
+
+@dataclass(frozen=True)
+class CyclesReading:
+    """What an app's deployment holds, and how fast it is draining.
+
+    Two numbers rather than one because the pair is a *runway*: a balance alone
+    says nothing about how long it lasts, and the failure this readout exists to
+    prevent is a canister that quietly runs out, freezes, and is deleted with
+    all its state. That is a dead man's switch on the author's app, so the page
+    states it rather than showing a bare number.
+
+    Rebuildable from the provider at any time, so it is cache and not data (SPEC
+    §47) — see ``publish/cycles.py``, which keeps one reading per app per target
+    for a day.
+    """
+
+    #: The provider's own smallest unit.
+    balance: int
+    #: What the deployment burns per day just by existing.
+    idle_burned_per_day: int
+    #: ISO-8601 UTC. Shown with the number: a reading with an "as of" beats a
+    #: spinner, so a stale one is labelled rather than hidden.
+    read_at: str
+
+    @property
+    def days_left(self) -> float | None:
+        """Balance ÷ idle burn. ``None`` when nothing is being burned, which is
+        not "forever" so much as "the provider did not tell us"."""
+        if self.idle_burned_per_day <= 0:
+            return None
+        return self.balance / self.idle_burned_per_day
+
+
+@runtime_checkable
+class FundedTarget(Protocol):
+    """The extra three questions a target that costs money answers.
+
+    Deliberately a SECOND protocol rather than three more methods on
+    :class:`PublishAdapter` with no-op defaults. Cloudflare Pages has no
+    identity, no balance and nothing to fund; giving it stubs would put an empty
+    Fund cycles panel one bug away from its Publish page. ``isinstance`` against
+    this protocol is what the registry and the routes branch on, so the answer
+    to "does this target need funding" is the adapter's own shape.
+    """
+
+    def funding(self) -> FundingState:
+        """Whether this target can be paid for a publish right now.
+
+        Read-only and cheap enough for a page load. Must not create an identity:
+        that is :meth:`create_identity`, which happens on an explicit press.
+        """
+        ...
+
+    def create_identity(self) -> IdentityCreated:
+        """Mint the publishing identity and return it, seed phrase included.
+
+        Called once, from the first Fund cycles press. The phrase crosses the
+        API boundary exactly here and is never retained on either side.
+        """
+        ...
+
+    def cycles(self, record: PublishRecord) -> CyclesReading:
+        """What this app's deployment holds and burns. One network round trip."""
         ...
