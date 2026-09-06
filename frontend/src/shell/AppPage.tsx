@@ -66,6 +66,7 @@ import {
   GitBranch,
   ExternalLink,
   ListTodo,
+  Rocket,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -84,6 +85,7 @@ import {
 import Scheduled from "./Scheduled";
 import AppFiles from "./AppFiles";
 import AppApi from "./AppApi";
+import AppPublish from "./AppPublish";
 
 // ---- the tabs, as ONE registry -----------------------------------------------
 //
@@ -168,6 +170,14 @@ const TAB_DEFS: Record<AppPageTab, TabDef> = {
     // Not keepMounted: the open row is in the URL (`?ep=`), and a return costs
     // one folder inspection — form values and responses are session scratch.
     render: ({ dir, folderHref }) => <AppApi dir={dir} folderHref={folderHref} />,
+  },
+  publish: {
+    label: "Publish",
+    Icon: Rocket,
+    // Not keepMounted: a hidden panel would keep polling a publish nobody is
+    // watching, and the run it would be polling lives on the server anyway —
+    // coming back re-reads it, mid-flight phase and all.
+    render: ({ dir }) => <AppPublish dir={dir} />,
   },
   git: {
     label: "Git",

@@ -108,8 +108,15 @@ export const APP_PAGE_PREFIX = "/apps/";
  *  so adding a tab is one string here plus one entry there — the compiler
  *  refuses the second being forgotten. Not every tab is offered on every
  *  folder: `git` shows only inside a work tree (AppPage's `visibleTabs`), so
- *  the ROUTE knows six tabs while the strip may draw five. */
-export const APP_PAGE_TABS = ["overview", "tasks", "files", "api", "git"] as const;
+ *  the ROUTE knows seven tabs while the strip may draw six. */
+export const APP_PAGE_TABS = [
+  "overview",
+  "tasks",
+  "files",
+  "api",
+  "publish",
+  "git",
+] as const;
 export type AppPageTab = (typeof APP_PAGE_TABS)[number];
 export const DEFAULT_APP_PAGE_TAB: AppPageTab = APP_PAGE_TABS[0];
 
