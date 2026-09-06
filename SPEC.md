@@ -11277,6 +11277,15 @@ Full design: `docs/PUBLISH.md`.
   dies on `nosniff` instead of on a status code, and `fetch(...).ok` is true for
   a file that does not exist. Static assets are matched before the rule, so it
   only ever catches a genuine miss.
+- **PB-7b** **The web manifest's URLs resolve against the MANIFEST, not the
+  page.** It is served from `_fused/manifest.webmanifest`, so the app root is
+  `../` — `./` sends an installed app to `/_fused/`, a directory of runtime
+  plumbing with no page in it, and the home-screen launch lands on the 404.
+  `../` rather than `/` because the site is a plain static tree that may be hung
+  under a prefix. `id` is left to its spec default of `start_url`: each
+  published app owns its origin, so the start URL already identifies it. Tests
+  assert the RESOLVED URL — a literal assertion here agrees with the code and
+  with nothing else.
 - **PB-8** **`_binding.py` is copied verbatim into the site** and read the way
   the engine reads it (D167), so param coercion in a published app is the same
   code as param coercion locally. No JavaScript reimplementation.

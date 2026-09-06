@@ -151,22 +151,34 @@ def _head_tags() -> str:
     )
 
 
-def _manifest(name: str, title: str) -> dict:
+def _manifest(title: str) -> dict:
     """The web app manifest.
 
-    ``display: standalone`` and ``scope: "./"`` are what turn the installed app
-    into its own window rather than a browser tab pointed at a URL — and, on iOS,
-    what puts it in the storage-exempt bucket the parent issue's open question is
-    about. The icon is declared ``any maskable`` so an Android launcher may crop
-    it to its own shape without letterboxing it (the generated lettermark is
-    full-bleed for exactly this).
+    ``display: standalone`` is what turns the installed app into its own window
+    rather than a browser tab pointed at a URL — and, on iOS, what puts it in the
+    storage-exempt bucket the parent issue's open question is about. The icon is
+    declared ``any maskable`` so an Android launcher may crop it to its own shape
+    without letterboxing it (the generated lettermark is full-bleed for exactly
+    this).
+
+    Every URL here is resolved against **the manifest's own URL**, not against
+    the page that linked it — and this manifest lives at
+    ``_fused/manifest.webmanifest``. So the app root is ``../``: ``./`` would
+    make the installed app open ``/_fused/``, which is a directory of runtime
+    plumbing with no page in it. ``../`` rather than ``/`` because the site is a
+    plain static tree that may be mounted under a path (a GitHub Pages project
+    site, say), and the app root is one level up from the runtime wherever the
+    tree is hung.
+
+    ``id`` is left to its default, which the spec defines as ``start_url``. An
+    id that resolves somewhere the app is not buys nothing: each published app
+    owns its origin, so the start URL already identifies it uniquely.
     """
     return {
         "name": title,
         "short_name": title[:12],
-        "id": f"/{name}",
-        "start_url": "./",
-        "scope": "./",
+        "start_url": "../",
+        "scope": "../",
         "display": "standalone",
         "orientation": "any",
         "background_color": "#0f1216",
@@ -306,7 +318,7 @@ def build(
     _write(os.path.join(runtime, "icon.svg"), icon_svg)
     _write(
         os.path.join(runtime, "manifest.webmanifest"),
-        json.dumps(_manifest(name, title), indent=2) + "\n",
+        json.dumps(_manifest(title), indent=2) + "\n",
     )
 
     packages = _vendor_pyodide(runtime, elig.pyodide_packages, needed=bool(elig.python_files))

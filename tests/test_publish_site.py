@@ -12,6 +12,7 @@ Nothing here downloads Pyodide. The distribution fetch is its own seam
 
 import json
 import os
+from urllib.parse import urljoin
 
 import pytest
 
@@ -165,9 +166,33 @@ def test_the_manifest_makes_the_app_installable_and_scoped_to_itself(tmp_path, n
     # standalone + a relative scope is what makes an installed app its own window
     # — and, on iOS, what puts it in the storage bucket ITP does not clear.
     assert manifest["display"] == "standalone"
-    assert manifest["scope"] == "./" and manifest["start_url"] == "./"
     assert manifest["name"] == "HSK Cards"  # from <title>, not the folder name
     assert manifest["icons"][0]["purpose"] == "any maskable"
+
+    # Resolved, not compared as literals. Every URL in a manifest resolves
+    # against THE MANIFEST'S OWN URL, and this one lives a directory down, so a
+    # literal that looks right ("./") sends the installed app to /_fused/ — a
+    # directory of runtime plumbing with no page in it. Asserting the strings
+    # is what let that ship: it agreed with the code and with nothing else.
+    base = "https://app.example.com/_fused/manifest.webmanifest"
+    assert urljoin(base, manifest["start_url"]) == "https://app.example.com/"
+    assert urljoin(base, manifest["scope"]) == "https://app.example.com/"
+    assert urljoin(base, manifest["icons"][0]["src"]) == (
+        "https://app.example.com/_fused/icon.svg"
+    )
+
+
+def test_the_manifest_still_points_at_the_app_when_the_site_is_under_a_path(
+    tmp_path, no_download
+):
+    # A Pages project owns its origin, but the site is a plain static tree and
+    # may be hung under a prefix (a GitHub Pages project site). "../" is right
+    # wherever it hangs; "/" would only be right at the root.
+    out, _ = _build(tmp_path, {"index.html": "<html><head></head><body>x</body></html>"})
+    manifest = json.loads((out / "_fused" / "manifest.webmanifest").read_text(encoding="utf-8"))
+    base = "https://user.github.io/hsk-cards/_fused/manifest.webmanifest"
+    assert urljoin(base, manifest["start_url"]) == "https://user.github.io/hsk-cards/"
+    assert urljoin(base, manifest["scope"]) == "https://user.github.io/hsk-cards/"
 
 
 def test_the_worker_lives_at_the_root_so_its_scope_covers_the_page(tmp_path, no_download):
