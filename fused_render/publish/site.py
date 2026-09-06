@@ -193,6 +193,30 @@ _HEADERS = """# Written by fused-render's publish adapter.
 """
 
 
+#: The one rule that matters here, and it is not a redirect: it forces a MISS to
+#: be a miss. Cloudflare Pages answers an unknown path with the site's own
+#: ``index.html`` at HTTP **200** — so an asset the author forgot to bundle comes
+#: back as a page of HTML wearing the filename it was asked for. A `<script src>`
+#: then dies on `nosniff` instead of on a 404, `fetch(...).ok` is TRUE for a file
+#: that does not exist, and the app reports something inscrutable. Static assets
+#: are matched before this rule, so it only ever catches a genuine miss.
+_REDIRECTS = """# Written by fused-render's publish adapter.
+/* /404.html 404
+"""
+
+#: Deliberately not a styled page: it exists to make the STATUS CODE right, and
+#: whoever needs to read it is the author, mid-debug, in a devtools Network row.
+_NOT_FOUND = """<!DOCTYPE html>
+<meta charset="utf-8" />
+<title>Not found</title>
+<p>This file is not part of the published app.</p>
+<p>If the app is asking for it, the file was not bundled &mdash; a
+<code>fused.rawUrl()</code> path the exporter could not resolve statically has to
+be declared in a <code>&lt;script type="application/fused-bundle"&gt;</code>
+manifest before it ships.</p>
+"""
+
+
 def _build_id(site_dir: str) -> str:
     """A short digest of everything published, for the service worker's cache name.
 
@@ -302,6 +326,11 @@ def build(
     }
     _write(os.path.join(runtime, "site.json"), json.dumps(site, indent=2, sort_keys=True) + "\n")
     _write(os.path.join(site_dir, "_headers"), _HEADERS)
+    _write(os.path.join(site_dir, "_redirects"), _REDIRECTS)
+    # The author's own 404 page wins if they shipped one: the point of the rule
+    # above is the status code, not our wording.
+    if not os.path.exists(os.path.join(site_dir, "404.html")):
+        _write(os.path.join(site_dir, "404.html"), _NOT_FOUND)
 
     # The service worker last: its cache name is a digest of everything above, so
     # it has to be written after the rest exists. Its own bytes are therefore not

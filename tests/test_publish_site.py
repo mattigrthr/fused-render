@@ -210,3 +210,32 @@ def test_building_into_a_non_empty_directory_is_refused(tmp_path, no_download):
             str(tmp_path / "bundle"), str(out), app_dir=str(tmp_path / "app"),
             name="demo", elig=scan(str(tmp_path / "app" / "index.html")),
         )
+
+
+def test_a_missing_file_is_a_404_not_the_app_wearing_its_name(tmp_path, no_download):
+    # Cloudflare Pages answers an unknown path with the site's own index.html at
+    # HTTP 200. A <script src> for a file that was never bundled then loads a
+    # page of HTML, dies on nosniff rather than on a 404, and the app reports
+    # something inscrutable — which is exactly how the first real publish of
+    # chinese-hsk-cards failed. The splat rule turns a miss back into a miss.
+    out, _ = _build(tmp_path, {"index.html": "<html><head></head><body>x</body></html>"})
+    assert "/* /404.html 404" in (out / "_redirects").read_text(encoding="utf-8")
+    assert (out / "404.html").is_file()
+
+
+def test_the_authors_own_404_page_is_not_overwritten(tmp_path, no_download):
+    # The rule exists for the status code, not for our wording.
+    out, _ = _build(
+        tmp_path,
+        {
+            # Declared, because the exporter only ships what the page reaches:
+            # a 404.html sitting unreferenced in the folder is not part of the app.
+            "index.html": (
+                '<html><head><script type="application/fused-bundle">'
+                '{ "include": ["404.html"] }</script></head><body>x</body></html>'
+            ),
+            "404.html": "<h1>nothing here</h1>",
+        },
+    )
+    assert (out / "404.html").read_text(encoding="utf-8") == "<h1>nothing here</h1>"
+    assert "/* /404.html 404" in (out / "_redirects").read_text(encoding="utf-8")
