@@ -53,6 +53,7 @@ from fused_render.server.routers.capture import router as capture_router
 from fused_render.server.routers.config import router as config_router
 from fused_render.server.routers.env import router as env_router
 from fused_render.server.routers.export import router as export_router
+from fused_render.server.routers.publish import router as publish_router
 from fused_render.server.fs_mutate import router as fs_mutate_router
 from fused_render.server.routers.fs_read import router as fs_read_router
 from fused_render.server.routers.git_repos import router as git_repos_router
@@ -753,6 +754,11 @@ def create_app(start_dir: str) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(ai_router)
     app.include_router(export_router)
+    # Publish (routers/publish.py): /api/publish/* — the app's own hosting, on
+    # infrastructure the AUTHOR owns. This app hosts nothing and holds no
+    # provider credential; it drives the author's own provider CLI locally, the
+    # same posture as `mounts` with rclone (SPEC §48).
+    app.include_router(publish_router)
     # The OS clipboard bridge (routers/clipboard.py): /api/clipboard/files, the
     # local-machine seam that lets a Copy here paste in Finder/Explorer and a
     # copy there paste here (SPEC §3).

@@ -65,3 +65,7 @@ docs/superpowers/plans/
 
 # Windows dev.ps1 isolated home
 .dev-home/
+
+# wrangler's per-machine state, dropped beside whatever directory it was run
+# in — so it appears in the repo root the first time anyone publishes an app.
+.wrangler/

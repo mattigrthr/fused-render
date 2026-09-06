@@ -57,12 +57,24 @@ fused-render/
 │   │       ├── run.py          # /api/run
 │   │       ├── env.py          # script-venv install loader: /api/env/install|progress|cancel (PY-18/D173)
 │   │       ├── jobs.py         # background-job registry: /api/jobs report|list|cancel|dismiss|clear (SPEC §36/D244)
-│   │       └── export.py       # /api/export
+│   │       ├── export.py       # /api/export
+│   │       └── publish.py      # /api/publish/plan|auth|login|deploy|run|forget (SPEC §48/D623)
 │   ├── executor.py             # runner: in-process for first-party helpers, subprocess for user code (D72)
 │   ├── _child.py               # worker-process entry (subprocess path)
 │   ├── _binding.py             # param coercion shared by both execution paths
 │   ├── logs.py                 # rotating app log for 500 / right-click-open diagnostics (D68)
 │   ├── jobs.py                 # the background-job registry itself (in-memory, swept) — the download manager's model
+│   ├── publish/                # an app onto the author's OWN hosting (SPEC §48, docs/PUBLISH.md)
+│   │   ├── adapter.py          # the seam: the Capability grid, PublishAdapter, PublishError — nothing provider-specific
+│   │   ├── eligibility.py      # which runtime/state cells an app needs, and what disqualifies it
+│   │   ├── registry.py         # the adapter set + the offer rule (set membership over the grid)
+│   │   ├── record.py           # .fused/data/publish.json — the app's own memory of where it lives
+│   │   ├── site.py             # bundle -> a static site that carries its own Python interpreter
+│   │   ├── pyodide_dist.py     # the pinned Pyodide core + the wheel dependency closure, cached per machine
+│   │   ├── icon.py             # the author's icon.svg, or a generated lettermark
+│   │   ├── runs.py             # a publish as a polled background run, one per (app, target)
+│   │   ├── cloudflare.py       # the Cloudflare Pages adapter (drives the author's own wrangler)
+│   │   └── static/             # what ships INSIDE a published site: runtime.js, boot.py, sw.js
 │   ├── static/
 │   │   ├── shell-dist/         # Vite build of frontend/ (gitignored, D54; built by dev / packaging hook)
 │   │   └── runtime.js          # injected into every rendered HTML (plain JS, NOT part of the React app)

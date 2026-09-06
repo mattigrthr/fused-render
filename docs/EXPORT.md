@@ -17,6 +17,13 @@ To actually publish a page to a hosted URL, hand the exported bundle to the
 `fused` CLI directly (`fused share create --public`), which mints the URL on a
 hosted environment.
 
+Or use **Publish** (SPEC §48, `docs/PUBLISH.md`), which takes the same bundle
+the other way: it builds a self-contained static site around it — one that
+carries its own Python interpreter, so a `runPython` page needs no server at
+all — and hands that to a provider the author is already signed into. Publish
+is the consumer of the blocking errors below: what makes a page un-exportable
+(EX-3, EX-4) is exactly what makes an app un-publishable, reported once.
+
 `page` and `out` must both be absolute filesystem paths (same convention as
 every other endpoint). Export is **non-destructive** — it never deletes an existing
 file — so `out` must be **empty** (or not yet exist); a non-empty `out` is rejected.

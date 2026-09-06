@@ -450,3 +450,272 @@
 .app-page-body > .skeleton-lines {
   margin: 0;
 }
+
+/* ---- the Publish tab (shell/AppPublish.tsx) --------------------------------
+   A column of cards, one for the app and one per provider — the same reading
+   order as the decision: what this app needs, then who can give it that. Wide
+   enough to hold a full sentence of explanation, capped so the reasons under a
+   disabled row stay in one measure rather than spanning the window. */
+.app-publish {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 24px;
+}
+
+.app-publish-summary,
+.app-publish-target {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-alt);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-publish-summary h2,
+.app-publish-target h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-publish-caption {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.app-publish-caption code {
+  font-size: 11px;
+}
+
+/* The two grid cells this app occupies — read as a pair, so they sit on one
+   line as chips rather than as a bulleted list of two. */
+.app-publish-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-publish-cells li {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app-publish-notes,
+.app-publish-reasons {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-publish-notes li,
+.app-publish-reasons li {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.app-publish-notes svg,
+.app-publish-reasons svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  opacity: 0.75;
+}
+
+/* A refusal is not a warning: it is the reason the button above is off. */
+.app-publish-reasons li {
+  color: var(--fg);
+}
+
+.app-publish-reasons svg {
+  color: var(--warning);
+  opacity: 1;
+}
+
+.app-publish-summary .error-banner ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.app-publish-banner-lead {
+  margin: 0;
+  font-weight: 600;
+}
+
+.app-publish-target > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.app-publish-target > header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-publish-auth {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.app-publish-auth a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app-publish-auth a svg {
+  width: 11px;
+  height: 11px;
+  margin-left: 3px;
+  vertical-align: -1px;
+}
+
+.app-publish-auth-ready {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success-soft);
+}
+
+.app-publish-auth-ready svg {
+  width: 14px;
+  height: 14px;
+}
+
+.app-publish-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-publish-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ctl-quiet-bg);
+  overflow: hidden;
+}
+
+.app-publish-bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+
+/* A phase this build does not know still has to LOOK like work happening —
+   a bar pinned at the left is how a running publish reads as a hang. */
+.app-publish-bar-indeterminate > span {
+  width: 35%;
+  animation: app-publish-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes app-publish-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(285%);
+  }
+}
+
+.app-publish-spin {
+  animation: app-publish-turn 900ms linear infinite;
+}
+
+@keyframes app-publish-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-publish-bar-indeterminate > span,
+  .app-publish-spin {
+    animation: none;
+  }
+}
+
+/* The address, once there is one: the QR beside it because the whole point of
+   publishing is a device that is not this one. */
+.app-publish-address {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.app-publish-qr {
+  flex: 0 0 auto;
+  width: 108px;
+  height: 108px;
+  border-radius: 6px;
+  /* Always light, in both themes — see --qr-paper in tokens.css. */
+  background: var(--qr-paper);
+  shape-rendering: crispEdges;
+}
+
+.app-publish-address-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app-publish-url {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.app-publish-url:hover {
+  text-decoration: underline;
+}
+
+.app-publish-url svg {
+  width: 12px;
+  height: 12px;
+  margin-left: 5px;
+  vertical-align: -1px;
+  opacity: 0.6;
+}
+
+.app-publish-address-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}

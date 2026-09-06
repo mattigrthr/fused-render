@@ -286,6 +286,12 @@
      Black in both modes because it reads as the letterbox of the picture
      rather than a surface of the page. */
   --scrim-letterbox: #000000;
+
+  /* A QR symbol, which is not a surface of the page but an image a camera has
+     to read. Dark-on-light in both modes: inverting a QR is the reliable way
+     to make half the phones in a room fail to scan it. */
+  --qr-paper: #ffffff;
+  --qr-ink: #000000;
   --task-c7: #a78bfa;
 }
 
@@ -437,5 +443,8 @@
   --scrim-chip-bg: rgba(255, 255, 255, 0.12);
   --scrim-chip-bg-hover: rgba(255, 255, 255, 0.22);
   --scrim-letterbox: #000000;
+  /* Identical to the dark palette, as above: a scanner has no theme. */
+  --qr-paper: #ffffff;
+  --qr-ink: #000000;
 }
 

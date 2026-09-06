@@ -508,6 +508,13 @@ def _discover_modules(
     return resources, warnings
 
 
+#: The opening words of the "computed asset path" warning, shared so a consumer
+#: that has to RECLASSIFY it (publish turns it into a blocker — see
+#: ``publish/eligibility.py``) matches on a constant rather than on prose that a
+#: later edit would silently break.
+UNRESOLVED_COMPUTED_ASSET = "fused.rawUrl()/readFile() call(s) use a computed path"
+
+
 def plan_export(
     html: str,
     page_dir: str,
@@ -712,7 +719,7 @@ def plan_export(
     dyn_asset = sum(_dynamic_call_count(html, method) for method in ("rawUrl", "readFile"))
     if dyn_asset > 0 and not any(a.source == "manifest" for a in plan.assets):
         plan.warnings.append(
-            f"{dyn_asset} fused.rawUrl()/readFile() call(s) use a computed path the "
+            f"{dyn_asset} {UNRESOLVED_COMPUTED_ASSET} the "
             "exporter can't resolve — declare the files those calls fetch in a "
             '<script type="application/fused-bundle"> manifest ("include" globs), or add '
             'them under "Include files" ("Add all in folder"), so they are bundled and '
