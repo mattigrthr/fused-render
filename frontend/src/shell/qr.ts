@@ -259,15 +259,23 @@ export function formatBits(mask: number): number {
 function drawFormat(g: Grid, mask: number) {
   const bits = formatBits(mask);
   const bit = (i: number) => ((bits >>> i) & 1) === 1;
+  // Indices are [row][column], and the two copies run in opposite directions:
+  // copy 1 climbs column 8 and then runs LEFTWARD along row 8, while copy 2
+  // runs leftward along row 8 from the right edge and then climbs column 8 from
+  // the bottom. Getting these two transposed still produces fifteen plausible
+  // dark and light modules in the right L-shaped strips — and a symbol whose
+  // payload is perfect and which no scanner will read, because the level and
+  // mask a decoder is told to use are not the ones the matrix was built with.
+  //
   // The copy that hugs the top-left eye, split around the timing lines.
-  for (let i = 0; i <= 5; i++) g.dark[8][i] = bit(i);
-  g.dark[8][7] = bit(6);
+  for (let i = 0; i <= 5; i++) g.dark[i][8] = bit(i);
+  g.dark[7][8] = bit(6);
   g.dark[8][8] = bit(7);
-  g.dark[7][8] = bit(8);
-  for (let i = 9; i <= 14; i++) g.dark[14 - i][8] = bit(i);
+  g.dark[8][7] = bit(8);
+  for (let i = 9; i <= 14; i++) g.dark[8][14 - i] = bit(i);
   // The second copy, so a damaged corner does not cost the whole symbol.
-  for (let i = 0; i <= 7; i++) g.dark[g.size - 1 - i][8] = bit(i);
-  for (let i = 8; i <= 14; i++) g.dark[8][g.size - 15 + i] = bit(i);
+  for (let i = 0; i <= 7; i++) g.dark[8][g.size - 1 - i] = bit(i);
+  for (let i = 8; i <= 14; i++) g.dark[g.size - 15 + i][8] = bit(i);
 }
 
 /** The spec's four penalty rules — runs, blocks, finder look-alikes, and the
@@ -366,12 +374,24 @@ export function qrMatrix(text: string): boolean[][] | null {
   return best;
 }
 
+/** The quiet zone, in modules. Exported so a caller's viewBox is derived from
+ *  the same number the path is drawn with — a viewBox that disagrees crops the
+ *  margin back off, which is the failure this constant exists to prevent. */
+export const QR_QUIET = 4;
+
 /**
  * The matrix as one SVG path — every dark module a 1×1 rect in a viewBox of
  * `size + 2 * quiet`. One path rather than N rects so a 45×45 symbol is one
  * DOM node, and integer coordinates so no module lands on a half pixel.
+ *
+ * {@link QR_QUIET} modules of quiet zone, which is what the spec requires and not a round
+ * number someone liked: it is the margin a scanner needs to find the symbol's
+ * edge. Narrower still LOOKS like a QR code, and still decodes in the forgiving
+ * case — a big symbol, straight on, good light — which is exactly why it is
+ * worth stating. This one is drawn small on a dark card and read at arm's
+ * length.
  */
-export function qrPath(matrix: boolean[][], quiet = 2): string {
+export function qrPath(matrix: boolean[][], quiet = QR_QUIET): string {
   const parts: string[] = [];
   for (let r = 0; r < matrix.length; r++)
     for (let c = 0; c < matrix[r].length; c++)

@@ -11286,6 +11286,15 @@ Full design: `docs/PUBLISH.md`.
   published app owns its origin, so the start URL already identifies it. Tests
   assert the RESOLVED URL — a literal assertion here agrees with the code and
   with nothing else.
+- **PB-7c** **The QR encoder is pinned to symbols it did not draw.** A decoder
+  written beside an encoder shares its misconceptions: the format block shipped
+  transposed, the test's decoder read the fifteen bits back out of the same
+  wrong modules, the round trip closed, and no camera could read the result.
+  `qr.test.ts` therefore carries golden matrices produced by an independent
+  encoder and confirmed by an independent decoder, and writes the format
+  coordinates out as the spec's own table rather than deriving them. The quiet
+  zone is four modules (`QR_QUIET`), which the caller's viewBox is derived from
+  so the two cannot drift.
 - **PB-8** **`_binding.py` is copied verbatim into the site** and read the way
   the engine reads it (D167), so param coercion in a published app is the same
   code as param coercion locally. No JavaScript reimplementation.

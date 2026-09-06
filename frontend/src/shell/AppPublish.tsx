@@ -52,7 +52,7 @@ import {
   type PublishRun,
   type PublishTarget,
 } from "./publish-lib";
-import { qrMatrix, qrPath } from "./qr";
+import { QR_QUIET, qrMatrix, qrPath } from "./qr";
 
 type Load =
   | { kind: "loading" }
@@ -424,7 +424,7 @@ function Address({
         // it there without anyone typing a hostname with a thumb.
         <svg
           className="app-publish-qr"
-          viewBox={`0 0 ${matrix.length + 4} ${matrix.length + 4}`}
+          viewBox={`0 0 ${matrix.length + 2 * QR_QUIET} ${matrix.length + 2 * QR_QUIET}`}
           role="img"
           aria-label={`QR code for ${displayUrl(url)}`}
         >

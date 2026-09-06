@@ -79,11 +79,14 @@ function readFormat(m: boolean[][]): { level: number; mask: number } {
   const take = (i: number, v: boolean) => {
     if (v) bits |= 1 << i;
   };
-  for (let i = 0; i <= 5; i++) take(i, m[8][i]);
-  take(6, m[8][7]);
+  // Copy 1: up column 8, then leftward along row 8. Transposing these is a
+  // mistake that cancels against the same mistake in the encoder, so they are
+  // pinned separately in "writes the format block where a decoder looks for it".
+  for (let i = 0; i <= 5; i++) take(i, m[i][8]);
+  take(6, m[7][8]);
   take(7, m[8][8]);
-  take(8, m[7][8]);
-  for (let i = 9; i <= 14; i++) take(i, m[14 - i][8]);
+  take(8, m[8][7]);
+  for (let i = 9; i <= 14; i++) take(i, m[8][14 - i]);
   const unmasked = bits ^ 0x5412;
   return { level: unmasked >>> 13, mask: (unmasked >>> 10) & 0b111 };
 }
@@ -216,5 +219,130 @@ describe("qrPath", () => {
   it("emits one 1×1 square per dark module, offset by the quiet zone", () => {
     const path = qrPath([[true, false], [false, true]], 2);
     expect(path).toBe("M2 2h1v1h-1zM3 3h1v1h-1z");
+  });
+});
+
+// Two symbols this file did not draw.
+//
+// Every other test here decodes the encoder's output with a decoder written in
+// this file, and that is how the format block shipped TRANSPOSED: the decoder
+// read the fifteen bits back out of the same wrong modules the encoder had put
+// them in, so the round trip closed and no camera could read the result. A
+// golden breaks that circle. These two came out of an independent encoder
+// (segno) and were confirmed by an independent decoder (OpenCV's
+// QRCodeDetector) before being pasted here — neither of which has ever seen
+// this file.
+//
+// `#` is a dark module. Fourteen bytes, the exact capacity of version 1.
+const GOLDEN_A14 = [
+  "#######··#·#··#######",
+  "#·····#··#··#·#·····#",
+  "#·###·#·#···#·#·###·#",
+  "#·###·#·###···#·###·#",
+  "#·###·#·###·#·#·###·#",
+  "#·····#·#·#·#·#·····#",
+  "#######·#·#·#·#######",
+  "········#####········",
+  "#·#####··##·#·#####··",
+  "···##··###·····##·#·#",
+  "···##·#··#####···###·",
+  "###·##·#·#####···###·",
+  "··#···###·#·#·##·····",
+  "········###····##·#·#",
+  "#######····###···###·",
+  "#·····#·#··###···##·#",
+  "#·###·#·###·#·##···##",
+  "#·###·#·##·····##·#··",
+  "#·###·#·##·###···##··",
+  "#·····#····###···##··",
+  "#######·##··#·##···#·",
+];
+
+// The real thing: the address of the app this feature exists to hand to a
+// phone. Version 3, and byte-for-byte what OpenCV decoded back to the URL.
+// (Not identical to segno's, which pads the tail differently — pad codewords
+// after the terminator are ignored by every decoder — so this one is pinned to
+// what a decoder READ, not to another encoder's bytes.)
+const GOLDEN_URL = [
+  "#######····##·#····#··#######",
+  "#·····#·####·#·····##·#·····#",
+  "#·###·#··##····#··#·#·#·###·#",
+  "#·###·#···####····##··#·###·#",
+  "#·###·#·##··##··#·##··#·###·#",
+  "#·····#····#··##·####·#·····#",
+  "#######·#·#·#·#·#·#·#·#######",
+  "··········###···##···········",
+  "#·#·#·#···#·#····#··#···#··#·",
+  "#··#····##··##··###·###··#··#",
+  "####·###··#·#·#··##··##···###",
+  "#·#··#·#·····########···#··#·",
+  "#·#·####··#···#·#######··#·##",
+  "####···#·####·#·#·····#··#··#",
+  "##·#··#·###·##··##····####·##",
+  "#·###··######··###····####·#·",
+  "#·##·#####··#···##·####··#·##",
+  "···#·#····#·##··###·###··##·#",
+  "#···####·#·##·#·#·#··##·#··##",
+  "·#####·####·###·##·····###·#·",
+  "#·#·###·###·#·####··#####····",
+  "········#·##··#··#··#···#·###",
+  "#######···##·#····###·#·##·##",
+  "#·····#····##····##·#···##··#",
+  "#·###·#·##··#····#··#####···#",
+  "#·###·#··##··#··##·#·#·##·###",
+  "#·###·#·#######··#·····###··#",
+  "#·····#··###···######·#·#··#·",
+  "#######·#·#···#·##·####·#··##",
+];
+
+function render(m: boolean[][]): string[] {
+  return m.map((row) => row.map((v) => (v ? "#" : "·")).join(""));
+}
+
+describe("against symbols this file did not draw", () => {
+  it("reproduces a version 1 symbol module for module", () => {
+    expect(render(qrMatrix("a".repeat(14))!)).toEqual(GOLDEN_A14);
+  });
+
+  it("reproduces the published app's own address", () => {
+    expect(render(qrMatrix("https://chinese-hsk-cards.pages.dev")!)).toEqual(GOLDEN_URL);
+  });
+
+  it("writes the format block where a decoder looks for it", () => {
+    // The coordinates are the spec's, written out rather than derived, because
+    // deriving them is what let the encoder and the decoder in this file agree
+    // with each other and with nothing else. Copy 1 climbs column 8 and then
+    // runs leftward along row 8; copy 2 runs leftward along row 8 from the
+    // right edge and then climbs column 8 from the bottom.
+    const m = qrMatrix("a".repeat(14))!;
+    const n = m.length;
+    const copy1: Array<[number, number]> = [
+      [0, 8], [1, 8], [2, 8], [3, 8], [4, 8], [5, 8], [7, 8], [8, 8],
+      [8, 7], [8, 5], [8, 4], [8, 3], [8, 2], [8, 1], [8, 0],
+    ];
+    const copy2: Array<[number, number]> = [
+      [8, n - 1], [8, n - 2], [8, n - 3], [8, n - 4], [8, n - 5], [8, n - 6],
+      [8, n - 7], [8, n - 8],
+      [n - 7, 8], [n - 6, 8], [n - 5, 8], [n - 4, 8], [n - 3, 8], [n - 2, 8], [n - 1, 8],
+    ];
+    const read = (cells: Array<[number, number]>) =>
+      cells.reduce((acc, [r, c], i) => acc | ((m[r][c] ? 1 : 0) << i), 0) ^ 0x5412;
+
+    // Both copies say the same thing, and what they say is level M and a mask
+    // in range — not level Q and a mask the matrix was never built with, which
+    // is what a transposed block says while still looking like a format block.
+    expect(read(copy1)).toBe(read(copy2));
+    expect(read(copy1) >>> 13).toBe(0b00);
+    // `read` has already undone the 0x5412 mask; `formatBits` returns the bits
+    // as stored, so putting the mask back is what compares like with like.
+    expect(read(copy1) ^ 0x5412).toBe(formatBits((read(copy1) >>> 10) & 0b111));
+  });
+
+  it("surrounds the symbol with the four modules the spec asks for", () => {
+    // Narrower still looks like a QR code and still decodes straight on in
+    // good light, which is exactly why it is worth pinning: this one is drawn
+    // small, on a dark card, and read at arm's length.
+    const path = qrPath([[true]]);
+    expect(path).toBe("M4 4h1v1h-1z");
   });
 });
