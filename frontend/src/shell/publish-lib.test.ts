@@ -220,7 +220,21 @@ describe("runwayLabel", () => {
     expect(runwayLabel(cycles({ days_left: 0.4 }))).toBe("less than a day left");
     expect(runwayLabel(cycles({ days_left: 1.9 }))).toBe("about 1 day left");
     expect(runwayLabel(cycles({ days_left: 45 }))).toBe("about 45 days left");
-    expect(runwayLabel(cycles({ days_left: 400 }))).toBe("about 13 months left");
+    expect(runwayLabel(cycles({ days_left: 89 }))).toBe("about 89 days left");
+    expect(runwayLabel(cycles({ days_left: 90 }))).toBe("about 3 months left");
+  });
+
+  it("hands over to years, because nobody divides 55 months in their head", () => {
+    // The real reading off a freshly funded canister: 1.5T at 905.5M/day.
+    expect(runwayLabel(cycles({ days_left: 1_495_663_094_035 / 905_511_785 }))).toBe(
+      "about 4 years, 7 months left",
+    );
+    expect(runwayLabel(cycles({ days_left: 400 }))).toBe("about 1 year, 1 month left");
+  });
+
+  it("does not trail a zero remainder", () => {
+    expect(runwayLabel(cycles({ days_left: 365 }))).toBe("about 1 year left");
+    expect(runwayLabel(cycles({ days_left: 730 }))).toBe("about 2 years left");
   });
 
   it("has nothing to say when there is no burn figure", () => {

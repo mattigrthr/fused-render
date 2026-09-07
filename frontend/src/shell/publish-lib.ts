@@ -333,7 +333,16 @@ export function runwayTone(cycles: PublishCycles): "ok" | "low" | "critical" | "
   return "ok";
 }
 
-/** A runway as a phrase, or null when there is no burn figure to divide by. */
+function plural(n: number, unit: string): string {
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/** A runway as a phrase, or null when there is no burn figure to divide by.
+ *
+ *  Each unit hands over once it stops being the one a person would use. Days
+ *  past a quarter, then months — and months past a year, because "55 months
+ *  left" is arithmetic the reader has to finish themselves, and the whole point
+ *  of this line is to answer "should I care about this today" at a glance. */
 export function runwayLabel(cycles: PublishCycles): string | null {
   if (cycles.days_left === null) return null;
   const days = Math.floor(cycles.days_left);
@@ -341,7 +350,11 @@ export function runwayLabel(cycles: PublishCycles): string | null {
   if (days === 1) return "about 1 day left";
   if (days < 90) return `about ${days} days left`;
   const months = Math.floor(days / 30);
-  return `about ${months} months left`;
+  if (months < 12) return `about ${plural(months, "month")} left`;
+  const rest = months % 12;
+  const years = plural(Math.floor(months / 12), "year");
+  // A whole number of years says so, rather than trailing a "0 months".
+  return `about ${rest ? `${years}, ${plural(rest, "month")}` : years} left`;
 }
 
 /** When a reading was taken, in the words the panel uses.
