@@ -280,12 +280,25 @@ adapter's subprocess needs should not be carried by every install.
 
 `icp deploy` wants a project manifest and `site.py` produces a bare directory,
 so a minimal `icp.yaml` is synthesized in a temp dir per publish and deleted
-after — the author's app folder stays their content. That makes the canister-id
-mapping ours to keep: icp-cli records it in the project's
-`.icp/data/mappings/ic.ids.json`, our project does not survive the publish, and
-the record is seeded back into that file before a re-publish. Without it every
-re-publish looks like a first one, mints a new canister, and strands every
-reader's saved progress on an origin nobody will visit again.
+after — the author's app folder stays their content. The built site is **copied
+into** that project and named relatively (`dir: site`): the static-site recipe
+runs as a sandboxed plugin over the project directory and rejects anything else
+— *"is not a safe relative path (no absolute paths or '.' allowed)"* — and it
+rejects it **after** the canister has been created and paid for.
+
+That makes the canister-id mapping ours to keep: icp-cli records it in the
+project's `.icp/data/mappings/ic.ids.json`, our project does not survive the
+publish, and the record is seeded back into that file before a re-publish.
+Without it every re-publish looks like a first one, mints a new canister, and
+strands every reader's saved progress on an origin nobody will visit again.
+
+**The mapping file is not written when a deploy fails.** Observed: a deploy
+created the canister, the plugin then refused the path, and `.icp/data/` was
+never touched — the id existed only on stdout, as
+`Created canister <name> with ID <id>`. So the id is read from both places, the
+file first and that line second, name-checked. A canister that exists, that 2T
+paid for, and that already owns the origin readers will be sent to is not
+something to lose because the tidy source was empty.
 
 The canonical URL is `https://<canister-id>.icp0.io`. Each canister gets its own
 subdomain and therefore its own origin, which for a `state:client-local` app is

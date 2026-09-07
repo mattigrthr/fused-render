@@ -162,6 +162,21 @@ FUNDING_URL = "https://cli.internetcomputer.org/1.4/guides/tokens-and-cycles/"
 #: environment. Committed by icp-cli's own convention; synthesized by us.
 _IDS_FILE = os.path.join(".icp", "data", "mappings", f"{ENVIRONMENT}.ids.json")
 
+#: Where the built site sits INSIDE the synthesized project. The static-site
+#: recipe is a sandboxed plugin over the project directory and takes a relative
+#: path only, so this is a location rather than a reference.
+_SITE_SUBDIR = "site"
+
+#: How icp announces an id it just minted, on stdout, whether or not the rest of
+#: the deploy goes on to succeed. Read as a SECOND source for the canister id:
+#: the mapping file is authoritative, but a deploy that created the canister and
+#: then failed to sync into it left no mapping file at all — and dropping that
+#: id means the retry pays to mint another one at another origin.
+_CREATED_ID = re.compile(
+    r"created canister\s+(?P<name>\S+)\s+with id\s+(?P<id>[a-z0-9]{5}(?:-[a-z0-9]{5}){4})",
+    re.I,
+)
+
 #: A canister id: five groups of five lowercase base32 characters. Matching it
 #: is how we recognise one in a mapping file whose shape may grow fields.
 _CANISTER_ID = re.compile(r"^[a-z0-9]{5}(-[a-z0-9]{5}){4}$")
@@ -500,13 +515,12 @@ class Icp:
                 # have been created before we gave up, so the id is salvaged
                 # here too — this branch and the non-zero-exit one below are the
                 # same hazard reached two ways.
-                exc.salvage = self._salvage(canister, self._read_id(project, canister))
+                exc.salvage = self._salvage(canister, self._minted(project, canister, None))
                 raise
-            # Read the id back BEFORE looking at the exit code. icp-cli writes
-            # the mapping when the canister is created, which is well before the
-            # upload that may be what failed — and an id that exists is an
-            # origin the author has already paid for.
-            canister_id = self._read_id(project, canister) or existing_id
+            # Read the id back BEFORE looking at the exit code. The canister is
+            # created well before the upload that may be what failed, and an id
+            # that exists is an origin the author has already paid for.
+            canister_id = self._minted(project, canister, proc) or existing_id
             if proc.returncode != 0:
                 raise self._deploy_failure(proc, canister, canister_id)
         finally:
@@ -782,8 +796,17 @@ class Icp:
         does not survive the publish, so a re-publish would look like a first
         one and mint a new canister at a new origin. Seeding that file from the
         publish record is what makes re-publishing land on the same canister.
+
+        The site is COPIED IN rather than pointed at. The static-site recipe
+        runs as a sandboxed plugin over the project directory and rejects the
+        path outright otherwise — *"is not a safe relative path (no absolute
+        paths or '.' allowed)"* — and it rejects it AFTER the canister has been
+        created and paid for. A symlink would be the same bet on what the
+        sandbox resolves; a copy of a directory we built ourselves, moments ago,
+        on the same disk, is not worth being clever about.
         """
         project = tempfile.mkdtemp(prefix="fused-icp-project-")
+        shutil.copytree(site_dir, os.path.join(project, _SITE_SUBDIR))
         manifest = (
             "# Written by fused-render for one publish, then deleted.\n"
             "canisters:\n"
@@ -791,7 +814,7 @@ class Icp:
             "    recipe:\n"
             f'      type: "{STATIC_SITE_RECIPE}"\n'
             "      configuration:\n"
-            f"        dir: {json.dumps(site_dir)}\n"
+            f"        dir: {_SITE_SUBDIR}\n"
         )
         with open(os.path.join(project, "icp.yaml"), "w", encoding="utf-8") as f:
             f.write(manifest)
@@ -802,6 +825,34 @@ class Icp:
                 json.dump({canister: canister_id}, f, indent=2)
                 f.write("\n")
         return project
+
+    def _minted(
+        self, project: str, canister: str, proc: subprocess.CompletedProcess | None
+    ) -> str | None:
+        """The canister id this deploy is about, from either place icp puts it.
+
+        The mapping file is authoritative and is what a re-publish is seeded
+        from. But a deploy that CREATED the canister and then failed to install
+        into it leaves NO mapping file — it only says so on stdout::
+
+            Created canister chinese-hsk-cards with ID ekjeb-biaaa-aaaae-ag5ba-cai
+
+        That id is a canister that exists, that the author's cycles paid for,
+        and that already owns the origin their readers will be sent to. Dropping
+        it is the exact silent-loss failure the publish record exists to
+        prevent, so it is worth reading from two places rather than from the
+        tidy one — this was found the way such things are: a real canister, a
+        real 2T, and no record of either.
+        """
+        found = self._read_id(project, canister)
+        if found or proc is None:
+            return found
+        for match in _CREATED_ID.finditer((proc.stdout or "") + "\n" + (proc.stderr or "")):
+            # Name-checked, so a deploy naming several canisters cannot hand
+            # back a neighbour's id for ours.
+            if match.group("name").strip("'\"") == canister:
+                return match.group("id")
+        return None
 
     @staticmethod
     def _read_id(project: str, canister: str) -> str | None:

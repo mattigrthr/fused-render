@@ -23,6 +23,8 @@ outlives the call, not in a keyring of ours, not in the publish record.
 import json
 import os
 import stat
+import subprocess
+import tempfile
 
 import pytest
 
@@ -85,21 +87,37 @@ if argv[:2] == ["canister", "status"]:
            "  Reserved cycles limit: %s\n  Cycles: %s\n  Reserved cycles: 0\n"
            "  Idle cycles burned per day: %s\n" % (sep(5_000_000_000_000), sep(cyc), sep(idle)))
 if argv[:1] == ["deploy"]:
-    # The canister is created BEFORE the upload: the mapping lands either way.
-    if not os.path.exists(IDS):
-        os.makedirs(os.path.dirname(IDS), exist_ok=True)
-        manifest = open("icp.yaml").read()
-        name = [l.split("name:")[1].strip() for l in manifest.splitlines() if "name:" in l][0]
-        json.dump({name: state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-eeeee")}, open(IDS, "w"))
+    manifest = open("icp.yaml").read()
+    name = [l.split("name:")[1].strip() for l in manifest.splitlines() if "name:" in l][0]
+    site = [l.split("dir:")[1].strip() for l in manifest.splitlines() if "dir:" in l][0]
+    state["deployed_manifest"] = manifest
+    state["deployed_dir"] = site
+    # The recipe is a sandboxed plugin over the project dir: it takes a relative
+    # path and refuses anything else, AFTER the canister has been paid for.
+    if os.path.isabs(site) or site.startswith("."):
         state["created"] = True
+        finish("Created canister %s with ID %s\n" % (name, state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-eeeee")),
+               1, "ERR caused by: plugin dir %r is not a safe relative path "
+                  "(no absolute paths or '.' allowed)\n" % site)
+    state["deployed_files"] = sorted(os.listdir(site)) if os.path.isdir(site) else None
+    minted = state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-eeeee")
+    # The canister is created BEFORE the upload.
+    if not os.path.exists(IDS):
+        state["created"] = True
+        # Observed on a real failed deploy: the id is ANNOUNCED at creation and
+        # the mapping file is only written once the whole deploy succeeds.
+        if state.get("mapping_on_failure", True):
+            os.makedirs(os.path.dirname(IDS), exist_ok=True)
+            json.dump({name: minted}, open(IDS, "w"))
+        state["announced"] = "Created canister %s with ID %s\n" % (name, minted)
     else:
         state["reused"] = json.load(open(IDS))
+    announced = state.get("announced", "")
     if state.get("upload_fails"):
-        finish("", 1, "Error: insufficient cycles to install the asset canister")
+        finish(announced, 1, "Error: insufficient cycles to install the asset canister")
     if state.get("deploy_fails"):
-        finish("", 1, "Error: the replica rejected the request")
-    state["deployed_manifest"] = open("icp.yaml").read()
-    finish("Deployed.\n")
+        finish(announced, 1, "Error: the replica rejected the request")
+    finish(announced + "Deployed.\n")
 finish("", 1, "unexpected: %s" % argv)
 '''
 
@@ -367,7 +385,12 @@ def test_a_first_publish_returns_the_gateway_url_for_the_minted_canister(funded,
     assert result.project == "chinese-hsk-cards"
     assert result.updated_in_place is False
     assert any("frozen" in n for n in result.notes)  # the dead man's switch, said once
-    assert funded.read()["deployed_manifest"].count(site) == 1
+    # The site is COPIED INTO the project and named relatively. The recipe runs
+    # as a sandboxed plugin over the project directory and rejects an absolute
+    # path — after creating and charging for the canister.
+    state = funded.read()
+    assert state["deployed_dir"] == "site"
+    assert state["deployed_files"] == ["index.html"]
 
 
 def test_the_deploy_targets_mainnet_and_never_a_local_replica(funded, site):
@@ -408,6 +431,40 @@ def test_the_principal_is_asked_for_by_flag_because_there_is_no_positional_form(
     # `icp identity principal fused-render` is an argument error in 1.4, and a
     # bare `icp identity principal` answers for whichever identity is default.
     assert ask == ["identity", "principal", "--identity", "fused-render"]
+
+
+def test_a_canister_created_before_the_install_failed_is_still_recorded(funded, site):
+    # The failure this pins, found in production on a real canister: the deploy
+    # created chinese-hsk-cards, the static-site plugin then refused the path,
+    # and icp wrote NO mapping file — it only said so on stdout. Reading the
+    # tidy source alone dropped a real canister that 2T had just paid for, and
+    # the retry would have minted a second one at a second origin.
+    funded.update(mapping_on_failure=False, deploy_fails=True)
+    with pytest.raises(PublishError) as excinfo:
+        Icp().publish(site, name="demo", record=None)
+    assert excinfo.value.salvage is not None
+    assert excinfo.value.salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
+
+
+def test_an_id_announced_for_another_canister_is_not_taken_as_ours(funded, site):
+    from fused_render.publish.icp import Icp as _Icp
+
+    proc = subprocess.CompletedProcess(
+        args=[], returncode=1,
+        stdout="Created canister some-other-app with ID bbbbb-ccccc-ddddd-eeeee-fffff\n",
+        stderr="",
+    )
+    assert _Icp()._minted(str(tempfile.mkdtemp()), "demo", proc) is None
+
+
+def test_an_absolute_site_path_would_be_refused_after_the_canister_was_paid_for(funded, site):
+    # Belt and braces on the fix: the fake refuses exactly the way the real
+    # recipe did, so a regression here fails loudly rather than costing 2T.
+    from fused_render.publish.icp import _SITE_SUBDIR
+
+    assert _SITE_SUBDIR == "site" and not os.path.isabs(_SITE_SUBDIR)
+    Icp().publish(site, name="demo", record=None)
+    assert funded.read()["deployed_dir"] == _SITE_SUBDIR
 
 
 def test_a_re_publish_upgrades_the_same_canister_rather_than_minting_a_second(funded, site):
