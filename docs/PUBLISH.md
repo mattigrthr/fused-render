@@ -310,21 +310,25 @@ file first and that line second, name-checked. A canister that exists, that 2T
 paid for, and that already owns the origin readers will be sent to is not
 something to lose because the tidy source was empty.
 
-The canonical URL is `https://<canister-id>.raw.icp0.io` — the **raw** gateway
-host, which serves the canister's response without the HTTP gateway's
-certification check. The certified host answers `503 Response Verification
-Error` for an asset canister deployed this way; making it pass is its own piece
-of work and is deliberately deferred.
+The canonical URL is `https://<canister-id>.icp0.io` — the **certified** gateway
+host, where the HTTP gateway verifies the canister's response before handing it
+to the reader.
 
-`GATEWAY_HOST` is the one place that says so, and it is **an origin, not a
+There is a `raw.icp0.io` that skips that check, and it is worth knowing why not
+to reach for it. A canister whose assets have not synced answers `503 Response
+Verification Error` on the certified host and a plain `404` on raw, which reads
+exactly like certification being broken. It is not — there is simply nothing in
+the canister to certify. Once a sync lands, both hosts serve the app and only
+one of them verifies it.
+
+`GATEWAY_HOST` is the single place that decides, and it is **an origin, not a
 preference**. A rung-1 app's state is `localStorage`, scoped to the exact host,
-so moving between `raw.icp0.io` and `icp0.io` later strands every reader's saved
-progress on the host they used before — the same consequence as renaming a
-Cloudflare project, and it deserves the same care. Whoever picks the
-certification work up owns a migration, not a one-line edit.
+so switching hosts later strands every reader's saved progress on the one they
+used before — the same consequence as renaming a Cloudflare project, which this
+module refuses outright. Treat a change here as a migration.
 
-Each canister still gets its own subdomain and therefore its own origin, which
-for a `state:client-local` app is exactly what you want.
+Each canister gets its own subdomain and therefore its own origin, which for a
+`state:client-local` app is exactly what you want.
 
 Two things are worth stating plainly because they are easy to get wrong:
 

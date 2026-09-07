@@ -8,7 +8,7 @@ alongside Cloudflare rather than after it.
 What it publishes to is the only target on the grid with **no provider account
 at all**. No signup, no card, no plan, and no company that can close the
 author's account or delete their app. The bundle is served over HTTPS by the
-Internet Computer's HTTP gateway at ``https://<canister-id>.raw.icp0.io``, and the
+Internet Computer's HTTP gateway at ``https://<canister-id>.icp0.io``, and the
 reader needs a stock browser — no wallet, no extension, nothing installed.
 
 Each canister gets its own subdomain, therefore its own origin, therefore its
@@ -102,18 +102,21 @@ IDENTITY = "fused-render"
 ENVIRONMENT = "ic"
 NETWORK = "ic"
 
-#: The gateway host an app is served from. ``raw`` skips the HTTP gateway's
-#: response certification, which an asset canister does not currently satisfy —
-#: the certified host answers 503 "Response Verification Error" where this one
-#: serves the file.
+#: The gateway host an app is served from — the CERTIFIED one, where the HTTP
+#: gateway verifies the canister's response before handing it to the reader.
+#:
+#: There is a ``raw.icp0.io`` that skips that check, and it is briefly tempting:
+#: a canister whose assets have not synced answers 503 "Response Verification
+#: Error" on this host and a plain 404 on raw, which reads like certification
+#: being the problem. It is not — there was simply nothing in the canister to
+#: certify. Once a sync lands, both hosts serve, and only this one is verified.
 #:
 #: **This is an origin, so it is not a free choice.** A rung-1 app keeps its
-#: state in ``localStorage``, which is scoped to the exact host; moving between
-#: ``raw.icp0.io`` and ``icp0.io`` later is a move to a new origin, and every
-#: reader's saved progress stays behind on the old one. Changing this constant
-#: is the same class of act as renaming a Cloudflare project, and the same
-#: sentence in ``runs.py`` applies to it.
-GATEWAY_HOST = "raw.icp0.io"
+#: state in ``localStorage``, which is scoped to the exact host, so moving
+#: between the two hosts later strands every reader's saved progress on the one
+#: they used before. Changing this constant is the same class of act as renaming
+#: a Cloudflare project, and the same sentence in ``runs.py`` applies to it.
+GATEWAY_HOST = "icp0.io"
 
 #: The recipe that turns a directory of files into a served canister. Pinned:
 #: an unpinned recipe would change what our publishes deploy without a commit
