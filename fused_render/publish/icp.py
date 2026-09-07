@@ -107,13 +107,26 @@ NETWORK = "ic"
 #: here, and this one decides what the reader's browser is handed.
 STATIC_SITE_RECIPE = "@dfinity/static-site@v0.3.3"
 
-#: 1T. The mainnet deployment guide budgets 1–2T cycles per canister for an
-#: initial deploy, so this is the floor at which we let a first publish start —
-#: high enough that the common "never funded" case never reaches a failed
-#: deploy, low enough that it is not our opinion about how much they should
-#: hold. The failure path (``_deploy_failure``) handles the rest, because a
-#: pre-flight check can pass and the install still fail.
-MINIMUM_CYCLES = 1_000_000_000_000
+#: What we ask ``icp deploy`` to put into a canister when it creates one. This
+#: is icp-cli's own default (``--cycles``, 2T) restated as a constant and passed
+#: explicitly, so the number our pre-flight check tests and the number the
+#: deploy actually demands are the same number and cannot drift. They already
+#: had: the check was the deployment guide's "budget 1–2T per canister", the
+#: deploy asked for 2T, and an author who transferred exactly the 1T we told
+#: them to still watched the publish fail.
+CREATE_CYCLES = 2_000_000_000_000
+
+#: The floor a first publish needs, which is exactly what creating the canister
+#: costs. A principal sitting exactly on it has nothing spare, which is why the
+#: copyable transfer command suggests more.
+MINIMUM_CYCLES = CREATE_CYCLES
+
+#: What the transfer command in the funding panel says. Deliberately ABOVE the
+#: floor: a command that suggests the precise minimum leaves the author on the
+#: boundary, where any fee at all — or a second app — puts them back in front of
+#: the same error. It is their money and their terminal; over-suggesting costs
+#: them nothing they cannot spend later, under-suggesting costs a failed deploy.
+SUGGESTED_TRANSFER = 3_000_000_000_000
 
 #: Below this many days of runway the readout is a warning rather than a number.
 #: A canister that runs out of cycles is frozen and eventually deleted WITH ALL
@@ -455,7 +468,17 @@ class Icp:
         try:
             try:
                 proc = self._run(
-                    ["deploy", "--environment", ENVIRONMENT, "--identity", IDENTITY, "--yes"],
+                    [
+                        "deploy",
+                        "--environment", ENVIRONMENT,
+                        "--identity", IDENTITY,
+                        # Pinned rather than left to the CLI's default, for the
+                        # same reason the recipe is: what a publish provisions
+                        # should change in a commit here, not in a release of
+                        # somebody else's tool.
+                        "--cycles", str(CREATE_CYCLES),
+                        "--yes",
+                    ],
                     timeout=DEPLOY_TIMEOUT_S,
                     cwd=project,
                 )
@@ -549,7 +572,10 @@ class Icp:
     def transfer_command(principal: str) -> str:
         """The command the author runs, in their own terminal, with their own
         money. We never move it: fused-render has no key and no wallet."""
-        return f"icp cycles transfer {format_cycles(MINIMUM_CYCLES)} {principal} -n {NETWORK}"
+        return (
+            f"icp cycles transfer {format_cycles(SUGGESTED_TRANSFER)} {principal} "
+            f"-n {NETWORK}"
+        )
 
     def create_identity(self) -> IdentityCreated:
         """Mint the publishing identity and hand back its seed phrase, once.
@@ -843,9 +869,18 @@ class Icp:
             if balance is not None
             else "fused-render could not read this principal's balance"
         )
+        # The SHORTFALL, not just the two totals. Both round to the same short
+        # string often enough to matter — 1.96T and 2T both print as "2T" — and
+        # "holds 2T, needs about 2T" reads as a bug in the checker rather than
+        # as a reason the author can act on.
+        short = (
+            f" It is {format_cycles(MINIMUM_CYCLES - balance)} short."
+            if balance is not None and balance < MINIMUM_CYCLES
+            else ""
+        )
         lines = [
             "there are not enough cycles to publish to the Internet Computer. "
-            f"{held}, and a canister needs about {format_cycles(MINIMUM_CYCLES)} to start.",
+            f"{held}, and creating a canister takes {format_cycles(CREATE_CYCLES)}.{short}",
         ]
         if principal:
             lines.append(f"\nYour principal:\n  {principal}")

@@ -218,7 +218,39 @@ def test_funding_reports_the_principal_the_balance_and_the_command_to_run(funded
     assert state.balance == 2_000_000_000_000
     # The transfer happens in the author's own terminal. fused-render has no
     # key and no wallet and never moves their money.
-    assert state.transfer_command == "icp cycles transfer 1T un4fu-tqaaa-aaaab-qadjq-cai -n ic"
+    assert state.transfer_command == "icp cycles transfer 3T un4fu-tqaaa-aaaab-qadjq-cai -n ic"
+
+
+def test_the_suggested_transfer_clears_the_floor_rather_than_landing_on_it():
+    # A command that suggests the exact minimum puts the author on the boundary,
+    # where a fee or a second app drops them back under it. This one is copied
+    # and run verbatim, so it has to leave room.
+    from fused_render.publish.icp import SUGGESTED_TRANSFER
+
+    assert SUGGESTED_TRANSFER > MINIMUM_CYCLES
+
+
+def test_the_pre_flight_floor_is_what_the_deploy_actually_asks_for(funded, site):
+    # The bug this pins: the floor was the deployment guide's "budget 1-2T",
+    # `icp deploy` defaults to funding creation with 2T, and an author who
+    # transferred exactly the 1T the panel asked for watched the publish fail
+    # with our own "not enough cycles" message beside a balance that met it.
+    from fused_render.publish.icp import CREATE_CYCLES
+
+    assert MINIMUM_CYCLES == CREATE_CYCLES
+    Icp().publish(site, name="demo", record=None)
+    deploy = [c for c in funded.read()["calls"] if c[:1] == ["deploy"]][0]
+    # Passed explicitly, so what a publish provisions changes in a commit here
+    # rather than in a release of somebody else's tool.
+    assert deploy[deploy.index("--cycles") + 1] == str(CREATE_CYCLES)
+
+
+def test_a_shortfall_is_named_rather_than_left_to_two_totals_that_round_alike(icp):
+    # 1.96T and 2T both print as "2T", and "holds 2T, needs about 2T" reads as a
+    # broken checker rather than as something the author can fix.
+    icp.update(identity=True, balance=1_960_000_000_000)
+    message = Icp()._fund_message(1_960_000_000_000)
+    assert "short" in message
 
 
 def test_an_identity_with_nothing_in_it_is_not_funded(icp):

@@ -321,7 +321,7 @@ Checked against a real `icp 1.4.0`:
 | `icp identity principal --identity <name>` | exits non-zero with "no identity found" before creation |
 | `icp cycles balance -n ic --identity <name> --json` | prints `{"balance":"2_000_602_400_000 cycles"}` — a *string*, with separators and a unit |
 | `icp cycles transfer <amount> <principal> -n ic` | amount takes `k`/`m`/`b`/`t` suffixes in either case |
-| `icp deploy -e ic --identity <name> --yes` | `-e`, never `-n`; `ic` and `local` are environments every project has |
+| `icp deploy -e ic --identity <name> --cycles 2000000000000 --yes` | `-e`, never `-n`; `ic` and `local` are environments every project has |
 | the synthesized `icp.yaml` | `icp build -e ic` succeeds on it, so the manifest shape and `@dfinity/static-site@v0.3.3` are right |
 | `.icp/data/mappings/ic.ids.json` | icp-cli's own documented location for mainnet ids |
 | `icp canister status <id> -e ic --identity <name>` | checked on a canister its caller controls — see below |
@@ -346,6 +346,26 @@ A field whose name already said "cycles" is parsed strictly, which is what lets
 a bare `0` be believed rather than read as "could not read". That distinction is
 the difference between a panel that says a canister is about to be deleted with
 every reader's progress in it and a panel that says nothing.
+
+### What a first publish costs
+
+`icp deploy` funds canister creation from the calling principal, and its default
+is **2T** (`--cycles`, from the CLI's own help). fused-render passes that amount
+explicitly and uses the same constant as its pre-flight floor, so the number the
+panel asks for and the number the deploy demands are one number.
+
+They were briefly two, and the gap was exactly the sort a pre-flight check is
+supposed to prevent: the floor came from the mainnet guide's "budget 1–2T per
+canister", the deploy asked for 2T, and an author who transferred precisely the
+1T the panel told them to watched the publish fail with our own "not enough
+cycles" beside a balance that met our own stated minimum.
+
+The copyable transfer command therefore suggests **more** than the floor. A
+command that names the exact minimum leaves the author on the boundary, where a
+ledger fee or a second app puts them straight back in front of the same error.
+And the shortfall is spelled out rather than left to be inferred from two totals
+— `format_cycles` rounds, so 1.96T and 2T both print as `2T`, and "holds 2T,
+needs about 2T" reads as a broken checker rather than as something to fix.
 
 ## Funding
 
