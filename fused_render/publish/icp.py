@@ -560,10 +560,21 @@ class Icp:
             balance=balance,
             minimum=MINIMUM_CYCLES,
             transfer_command=self.transfer_command(principal),
+            # A VERDICT when the answer is no, not a fact to be compared against
+            # another fact further down the panel. This sentence is the reason
+            # the Publish button is off, and it is the only place that says so —
+            # "1T cycles on this principal" is true, and leaves the author to
+            # work out for themselves that it is also not enough.
             detail=(
-                f"{format_cycles(balance)} cycles on this principal."
-                if balance is not None
-                else "Could not read the balance on this principal."
+                "Could not read the balance on this principal."
+                if balance is None
+                else f"{format_cycles(balance)} cycles on this principal."
+                if balance >= MINIMUM_CYCLES
+                else (
+                    f"Not enough cycles to publish: this principal holds "
+                    f"{format_cycles(balance)} of the {format_cycles(MINIMUM_CYCLES)} "
+                    "a canister needs to start."
+                )
             ),
             help_url=FUNDING_URL,
         )

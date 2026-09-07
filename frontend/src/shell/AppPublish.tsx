@@ -574,10 +574,20 @@ function Funding({
   // Funded and already live: the cycles readout below carries the number, and a
   // second panel saying the same thing is noise.
   if (funding.funded && published) return null;
+  // Funded is the only state that lets Publish run, so anything else with an
+  // identity behind it is the answer to "why is that button grey".
+  const short = funding.identity && !funding.funded;
   return (
-    <div className="app-publish-funding">
+    <div className={"app-publish-funding" + (short ? " app-publish-funding-short" : "")}>
       <div className="app-publish-funding-head">
-        <p className="app-publish-caption">{funding.detail}</p>
+        {/* The same shape a refused target uses above: the reason the button is
+            off, carrying its own warning mark, at the top of the panel rather
+            than in a sentence under it. A disabled button whose explanation is
+            the last line of a paragraph reads as arbitrary. */}
+        <p className={short ? "app-publish-funding-reason" : "app-publish-caption"}>
+          {short && <TriangleAlert aria-hidden />}
+          <span>{funding.detail}</span>
+        </p>
         <Button variant="outline" size="sm" onClick={onFund} disabled={busy}>
           {busy ? <Loader2 className="app-publish-spin" /> : <Wallet />}
           {funding.identity ? "Check balance" : "Fund cycles"}
@@ -590,9 +600,9 @@ function Funding({
             <CopyField label="Transfer cycles from your terminal" value={funding.transfer_command} />
           )}
           <p className="app-publish-caption">
-            A canister needs about {formatCycles(funding.minimum)} cycles to start
-            {funding.balance !== null && <> — this principal holds {formatCycles(funding.balance)}</>}
-            . fused-render never moves your money: the transfer runs in your own terminal.
+            {/* The numbers moved up into the verdict; what is left here is the
+                thing that is true in every state and worth saying once. */}
+            fused-render never moves your money: the transfer runs in your own terminal.
             {funding.help_url && (
               <>
                 {" "}

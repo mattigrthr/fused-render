@@ -781,6 +781,32 @@
   min-width: 0;
 }
 
+/* Why the Publish button above is grey. Drawn like .app-publish-reasons — the
+   page's existing shape for a refusal — rather than as another muted caption:
+   the balance and the verdict on the balance are different sentences, and only
+   one of them is the reason nothing happens when you press the button. */
+.app-publish-funding-reason {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.app-publish-funding-reason svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.app-publish-funding-short {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
 /* A principal and a transfer command: strings nobody retypes correctly, and one
    of them moves money. Always shown with the copy button beside them. */
 .app-publish-copyfield {

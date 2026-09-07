@@ -253,6 +253,25 @@ def test_a_shortfall_is_named_rather_than_left_to_two_totals_that_round_alike(ic
     assert "short" in message
 
 
+def test_an_underfunded_panel_says_it_cannot_publish_not_just_what_it_holds(icp):
+    # The line the Publish page leads the funding panel with IS the reason the
+    # button above it is grey, and it is the only place that says so. "1T cycles
+    # on this principal" is true and leaves the author to work out for
+    # themselves that it is also not enough.
+    icp.update(identity=True, balance=1_000_000_000_000)
+    state = Icp().funding()
+    assert state.funded is False
+    assert "Not enough cycles to publish" in state.detail
+    assert "1T" in state.detail and "2T" in state.detail
+
+
+def test_a_funded_panel_states_the_balance_without_a_verdict(icp):
+    icp.update(identity=True, balance=5_000_000_000_000)
+    state = Icp().funding()
+    assert state.funded is True
+    assert state.detail == "5T cycles on this principal."
+
+
 def test_an_identity_with_nothing_in_it_is_not_funded(icp):
     icp.update(identity=True, balance=1_000_000)
     state = Icp().funding()
