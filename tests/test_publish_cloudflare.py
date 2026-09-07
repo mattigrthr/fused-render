@@ -51,18 +51,32 @@ if argv[:3] == ["pages", "project", "list"]:
     # and every other wrangler --json command use. A fake that emitted "name"
     # made every test here pass against an adapter that could not recognise a
     # single existing project.
-    finish(BANNER + json.dumps([{"Project Name": n, "Project Domains": n + ".pages.dev"}
-                                for n in state.get("projects", [])]))
+    # "Project Domains" is a joined string of EVERY domain on the project, so a
+    # project with a custom domain has two. $subdomains maps a project to the
+    # pages.dev host Cloudflare actually gave it, which is not always <name>.
+    subs, customs = state.get("subdomains", {}), state.get("custom_domains", {})
+    finish(BANNER + json.dumps([
+        {"Project Name": n,
+         "Project Domains": ", ".join(
+             customs.get(n, []) + [subs.get(n, n) + ".pages.dev"])}
+        for n in state.get("projects", [])]))
 if argv[:3] == ["pages", "project", "create"]:
     name = argv[3]
     if name in state.get("taken", []):
         finish("", 1, "A project with this name already exists.")
     state.setdefault("projects", []).append(name)
+    # The real behaviour when the pages.dev subdomain is taken by a STRANGER:
+    # the project is still created under the requested name, and quietly gets a
+    # suffixed subdomain. Nothing about the exit code says so.
+    if name in state.get("subdomain_taken", []):
+        state.setdefault("subdomains", {})[name] = name + "-dqd"
     finish(BANNER + "created")
 if argv[:2] == ["pages", "deploy"]:
     if state.get("deploy_fails"): finish("", 1, "Upload failed: 413 Payload Too Large")
     state["deployed"] = argv[2]
-    finish(BANNER + "Deployment complete! https://abc123.%s.pages.dev\n" % state["projects"][-1])
+    proj = argv[argv.index("--project-name") + 1]
+    sub = state.get("subdomains", {}).get(proj, proj)
+    finish(BANNER + "Deployment complete! https://abc123.%s.pages.dev\n" % sub)
 finish("", 1, "unexpected: %s" % argv)
 '''
 
@@ -236,3 +250,99 @@ def test_a_project_entry_we_cannot_read_is_not_a_match(entry):
     from fused_render.publish.cloudflare import _project_key
 
     assert _project_key(entry) is None
+
+
+# ---- the address is read back, never predicted ------------------------------
+#
+# A pages.dev subdomain is unique across ALL of Cloudflare, not within one
+# account. Asking for a name a stranger already registered still creates the
+# project under that name — with a different subdomain. Guessing the host there
+# does not produce a broken link; it produces a WORKING link to someone else's
+# site, handed to the author as their own. These are the tests for that.
+
+
+def test_a_name_taken_elsewhere_returns_the_suffixed_host_cloudflare_assigned(wrangler, site):
+    wrangler.update(logged_in=True, subdomain_taken=["pushup-tracker"])
+    result = CloudflarePages().publish(site, name="pushup-tracker", record=None)
+    # The project keeps the requested name; only the hostname is suffixed.
+    assert result.project == "pushup-tracker"
+    assert result.url == "https://pushup-tracker-dqd.pages.dev"
+
+
+def test_a_suffixed_host_is_explained_rather_than_left_looking_like_a_bug(wrangler, site):
+    wrangler.update(logged_in=True, subdomain_taken=["pushup-tracker"])
+    result = CloudflarePages().publish(site, name="pushup-tracker", record=None)
+    note = "\n".join(result.notes)
+    assert "pushup-tracker.pages.dev" in note and "pushup-tracker-dqd.pages.dev" in note
+
+
+def test_an_unsuffixed_host_says_nothing_extra(wrangler, site):
+    wrangler.update(logged_in=True)
+    result = CloudflarePages().publish(site, name="chinese-hsk-cards", record=None)
+    assert not any("already taken" in n for n in result.notes)
+
+
+def test_a_re_publish_corrects_a_url_that_was_recorded_wrong(wrangler, site):
+    # How an app published before this fix heals: the record's stale URL is never
+    # trusted, so the next Publish update writes the real one (runs.py rewrites
+    # the record from result.url on every publish).
+    wrangler.update(
+        logged_in=True, projects=["pushup-tracker"], subdomains={"pushup-tracker": "pushup-tracker-dqd"}
+    )
+    record = PublishRecord(
+        target="cloudflare-pages",
+        project="pushup-tracker",
+        url="https://pushup-tracker.pages.dev",  # the stranger's site
+    )
+    result = CloudflarePages().publish(site, name="pushup-tracker", record=record)
+    assert result.url == "https://pushup-tracker-dqd.pages.dev"
+    assert result.updated_in_place is True
+
+
+def test_a_custom_domain_does_not_displace_the_pages_dev_address(wrangler, site):
+    # A custom domain can be detached at Cloudflare. If the share link followed
+    # it, every reader's localStorage progress would be stranded on an origin
+    # nothing points at any more.
+    wrangler.update(
+        logged_in=True,
+        projects=["chinese-hsk-cards"],
+        custom_domains={"chinese-hsk-cards": ["cards.example.com"]},
+    )
+    record = PublishRecord(
+        target="cloudflare-pages",
+        project="chinese-hsk-cards",
+        url="https://chinese-hsk-cards.pages.dev",
+    )
+    result = CloudflarePages().publish(site, name="chinese-hsk-cards", record=record)
+    assert result.url == "https://chinese-hsk-cards.pages.dev"
+
+
+def test_the_deploy_alias_carries_the_host_when_the_project_list_is_unreadable(wrangler, site):
+    # A deploy that SUCCEEDED must not be reported as a failure because a
+    # follow-up lookup did not work. The per-deployment alias has the same
+    # subdomain in it, one label along.
+    adapter = CloudflarePages()
+    wrangler.update(logged_in=True, subdomain_taken=["pushup-tracker"])
+    real_projects = adapter._projects
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] > 2:  # the pre-deploy existence checks still work
+            raise PublishError("could not list your Cloudflare Pages projects")
+        return real_projects()
+
+    adapter._projects = flaky
+    result = adapter.publish(site, name="pushup-tracker", record=None)
+    assert result.url == "https://pushup-tracker-dqd.pages.dev"
+
+
+def test_a_host_with_no_pages_dev_domain_at_all_falls_back_to_the_project_name(wrangler, site):
+    # wrangler changing its output shape should degrade to the old guess, not
+    # crash a publish that already uploaded.
+    adapter = CloudflarePages()
+    wrangler.update(logged_in=True)
+    adapter._projects = lambda: [{"Project Name": "demo", "Project Domains": ""}]
+    adapter._deployment_url = lambda proc: None
+    result = adapter.publish(site, name="demo", record=None)
+    assert result.url == "https://demo.pages.dev"

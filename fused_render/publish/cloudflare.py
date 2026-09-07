@@ -18,15 +18,24 @@ ask wrangler *whether* we are authenticated, and it does the rest.
 
 ## The origin is the contract
 
-A Pages project's canonical hostname is ``<project>.pages.dev``, derived from the
-project name and stable for the project's life. That is what makes re-publishing
-in place possible, and re-publishing in place is not a nicety — a rung-1 app's
-state lives in ``localStorage``, which is origin-scoped, so a publish that minted
-a new project would silently orphan every reader's progress. So the project name
-is recorded on the first publish (``record.py``) and every later publish deploys
-into that same project, never creating a second one.
+A Pages project gets one canonical ``*.pages.dev`` hostname, stable for the
+project's life. That is what makes re-publishing in place possible, and
+re-publishing in place is not a nicety — a rung-1 app's state lives in
+``localStorage``, which is origin-scoped, so a publish that minted a new project
+would silently orphan every reader's progress. So the project name is recorded on
+the first publish (``record.py``) and every later publish deploys into that same
+project, never creating a second one.
 
-The per-deployment ``<hash>.<project>.pages.dev`` alias Cloudflare also mints is
+That hostname is **read back from Cloudflare, never predicted**. It is tempting
+to assume ``<project>.pages.dev``, and for most projects that is what it is — but
+the ``pages.dev`` subdomain is unique across all of Cloudflare, not within one
+account. Ask for a name a stranger already took and Cloudflare still creates
+*your* project under the name you asked for, then quietly assigns it a suffixed
+subdomain (``pushup-tracker`` -> ``pushup-tracker-dqd.pages.dev``). Guessing there
+does not produce a broken link, which would at least be visible; it produces a
+working link to someone else's site, handed to the author as their own.
+
+The per-deployment ``<hash>.<subdomain>.pages.dev`` alias Cloudflare also mints is
 recorded but never handed to the author: it pins a reader to one snapshot and
 would split their saved state across origins.
 
@@ -98,6 +107,12 @@ def project_name(app_name: str) -> str:
 _PROJECT_NAME_KEYS = ("Project Name", "name")
 
 
+#: Where a project's hostnames live in the same ``--json`` table. ``"Project
+#: Domains"`` is the column heading; ``"domains"`` is the API shape, accepted for
+#: the same reason ``"name"`` is above.
+_PROJECT_DOMAIN_KEYS = ("Project Domains", "domains")
+
+
 def _project_key(entry: object) -> str | None:
     if not isinstance(entry, dict):
         return None
@@ -105,6 +120,30 @@ def _project_key(entry: object) -> str | None:
         value = entry.get(key)
         if isinstance(value, str) and value:
             return value
+    return None
+
+
+def _pages_dev_host(entry: object) -> str | None:
+    """The ``*.pages.dev`` hostname a project-list entry carries, if any.
+
+    The column is a *joined string* of every domain on the project (the API shape
+    is a list; both are read), so a project with a custom domain attached looks
+    like ``"myapp.com, myapp-dqd.pages.dev"``. The ``pages.dev`` one is the one we
+    want, and not merely because it is always present: a custom domain can be
+    detached at Cloudflare, and if the author's share link followed it, every
+    reader's ``localStorage`` progress would be stranded on an origin nothing
+    points at any more. The ``pages.dev`` host lives as long as the project.
+    """
+    if not isinstance(entry, dict):
+        return None
+    for key in _PROJECT_DOMAIN_KEYS:
+        value = entry.get(key)
+        parts = value if isinstance(value, list) else str(value or "").split(",")
+        for part in parts:
+            host = part.strip().strip("/") if isinstance(part, str) else ""
+            host = host.split("://")[-1]
+            if host.endswith(".pages.dev"):
+                return host
     return None
 
 
@@ -310,14 +349,23 @@ class CloudflarePages:
         if proc.returncode != 0:
             raise PublishError(f"the Cloudflare upload failed:\n{self._failure(proc)}")
 
+        host = self._canonical_host(project, proc)
         notes: list[str] = []
         if not existed:
             notes.append(
                 "This is the app's first publish. The address can take a minute to start "
                 "resolving worldwide — if it does not load straight away, wait and retry."
             )
+        if host != f"{project}.pages.dev":
+            # Otherwise the address just looks wrong, and the obvious guess — that
+            # fused-render mangled it — is the one explanation that isn't true.
+            notes.append(
+                f"{project}.pages.dev was already taken by someone else's site, so Cloudflare "
+                f"gave this project {host} instead. That is your app's real address; the "
+                "shorter one is not."
+            )
         return PublishResult(
-            url=f"https://{project}.pages.dev",
+            url=f"https://{host}",
             project=project,
             updated_in_place=existed,
             notes=notes,
@@ -328,7 +376,8 @@ class CloudflarePages:
 
     # ---- Pages plumbing -----------------------------------------------------
 
-    def _project_exists(self, project: str) -> bool:
+    def _projects(self) -> list:
+        """Every Pages project in this account, as wrangler's table-shaped JSON."""
         proc = self._run(["pages", "project", "list", "--json"], timeout=QUERY_TIMEOUT_S)
         if proc.returncode != 0:
             raise PublishError(
@@ -339,7 +388,47 @@ class CloudflarePages:
             raise PublishError(
                 "could not read the list of Cloudflare Pages projects. Nothing was published."
             )
-        return any(_project_key(p) == project for p in projects)
+        return projects
+
+    def _project_exists(self, project: str) -> bool:
+        return any(_project_key(p) == project for p in self._projects())
+
+    def _canonical_host(self, project: str, deploy: subprocess.CompletedProcess) -> str:
+        """The hostname Cloudflare actually assigned ``project``.
+
+        Asked *after* the deploy, because on a first publish the project — and so
+        the subdomain — did not exist before it. Three sources, degrading rather
+        than failing, because a deploy that already succeeded must not be reported
+        as an error over a hostname lookup:
+
+        1. The project's own ``pages.dev`` domain from the project list. The
+           authoritative answer, and the only one that shows a suffix Cloudflare
+           added because the name was taken elsewhere.
+        2. The per-deployment ``<hash>.<subdomain>.pages.dev`` alias this deploy
+           printed, with the hash label dropped. Carries the same suffix, so it
+           survives a project list that failed or changed shape.
+        3. ``<project>.pages.dev`` — the old guess. Right for most projects, and
+           no worse than what we did before when everything else is unavailable.
+        """
+        try:
+            for entry in self._projects():
+                if _project_key(entry) == project:
+                    host = _pages_dev_host(entry)
+                    if host:
+                        return host
+                    break
+        except PublishError:
+            pass  # the upload landed; a lookup failure must not undo that
+
+        alias = self._deployment_url(deploy)
+        if alias:
+            labels = alias.split("://")[-1].split("/")[0].split(".")
+            # <hash>.<subdomain>.pages.dev is 4 labels; anything shorter is
+            # already the canonical host and has no hash to strip.
+            if len(labels) >= 4:
+                return ".".join(labels[1:])
+
+        return f"{project}.pages.dev"
 
     def _create_project(self, project: str) -> None:
         proc = self._run(
