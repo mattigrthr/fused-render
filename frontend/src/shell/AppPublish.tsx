@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { Button } from "@platform/shadcn/ui/button";
 import { ErrorBanner } from "@platform/ui/ErrorBanner";
+import { PublishTargetIcon } from "@platform/ui/PublishIcons";
 import { SkeletonLines } from "@platform/ui/Skeleton";
 import { copyToClipboard } from "@platform/lib/clipboard";
 import { pushToast } from "@platform/lib/toast";
@@ -407,7 +408,12 @@ function TargetCard({
     <section className="app-publish-target" aria-labelledby={`pub-${target.id}`}>
       <header>
         <div>
-          <h3 id={`pub-${target.id}`}>{target.label}</h3>
+          <h3 id={`pub-${target.id}`}>
+            <span className="app-publish-mark">
+              <PublishTargetIcon target={target.id} />
+            </span>
+            {target.label}
+          </h3>
           <p className="app-publish-caption">{target.blurb}</p>
         </div>
         <Button onClick={onPublish} disabled={!ready}>

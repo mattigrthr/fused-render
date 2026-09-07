@@ -484,6 +484,42 @@
   font-weight: 600;
 }
 
+/* One card per provider, with the same air between them as between the summary
+   and the first card — the list is a stack of separate decisions, and two cards
+   sharing an edge read as one card with a rule through it. */
+.app-publish-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* The provider's mark, in a square badge beside its name (platform/ui/
+   PublishIcons.tsx). Sized off the heading it sits in rather than fixed in
+   pixels, so it tracks the title's line box instead of drifting from it. */
+.app-publish-target h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-publish-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-muted);
+}
+
+.app-publish-mark svg {
+  width: 15px;
+  height: 15px;
+}
+
 .app-publish-caption {
   margin: 0;
   font-size: 12px;
