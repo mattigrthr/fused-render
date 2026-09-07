@@ -290,7 +290,13 @@ export function canPublish(
   funding?: PublishFunding | null,
 ): boolean {
   if (!target.eligible || auth?.status !== "ready") return false;
-  if (target.funding && funding) return funding.funded;
+  // Funding pays to CREATE the deployment. An app that already has one updates
+  // in place — the upload is charged to the canister, which holds its own
+  // cycles, not to the principal — so a principal at zero must not block a
+  // re-publish. Gating it there would also be the worst possible moment to
+  // block: the app is live, and the only way to change what readers see is the
+  // button that has just gone grey.
+  if (target.funding && funding && !target.published) return funding.funded;
   return true;
 }
 

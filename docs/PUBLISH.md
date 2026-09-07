@@ -300,9 +300,21 @@ file first and that line second, name-checked. A canister that exists, that 2T
 paid for, and that already owns the origin readers will be sent to is not
 something to lose because the tidy source was empty.
 
-The canonical URL is `https://<canister-id>.icp0.io`. Each canister gets its own
-subdomain and therefore its own origin, which for a `state:client-local` app is
-exactly what you want.
+The canonical URL is `https://<canister-id>.raw.icp0.io` — the **raw** gateway
+host, which serves the canister's response without the HTTP gateway's
+certification check. The certified host answers `503 Response Verification
+Error` for an asset canister deployed this way; making it pass is its own piece
+of work and is deliberately deferred.
+
+`GATEWAY_HOST` is the one place that says so, and it is **an origin, not a
+preference**. A rung-1 app's state is `localStorage`, scoped to the exact host,
+so moving between `raw.icp0.io` and `icp0.io` later strands every reader's saved
+progress on the host they used before — the same consequence as renaming a
+Cloudflare project, and it deserves the same care. Whoever picks the
+certification work up owns a migration, not a one-line edit.
+
+Each canister still gets its own subdomain and therefore its own origin, which
+for a `state:client-local` app is exactly what you want.
 
 Two things are worth stating plainly because they are easy to get wrong:
 
@@ -359,6 +371,21 @@ A field whose name already said "cycles" is parsed strictly, which is what lets
 a bare `0` be believed rather than read as "could not read". That distinction is
 the difference between a panel that says a canister is about to be deleted with
 every reader's progress in it and a panel that says nothing.
+
+### Funding gates creation, not updates
+
+The cycles floor is a **first-publish** precondition. An app that already has a
+canister updates in place, and that upload is charged to the canister — which
+holds its own cycles — not to the principal. So a principal at zero, which is
+the normal state right after creating a canister, must not block a re-publish.
+
+The adapter's pre-flight already skipped the check when the record named a
+canister; the Publish page did not, and gated the button on the funding panel
+regardless. That is the worst moment to block: the app is live, and the button
+that just went grey is the only way to change what its readers see. `canPublish`
+now asks about funding only when there is nothing published yet, and the funding
+panel hides itself entirely once there is — from then on the number that decides
+anything is the canister's own runway, which the cycles readout carries.
 
 ### What a first publish costs
 

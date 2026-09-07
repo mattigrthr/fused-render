@@ -8,7 +8,7 @@ alongside Cloudflare rather than after it.
 What it publishes to is the only target on the grid with **no provider account
 at all**. No signup, no card, no plan, and no company that can close the
 author's account or delete their app. The bundle is served over HTTPS by the
-Internet Computer's HTTP gateway at ``https://<canister-id>.icp0.io``, and the
+Internet Computer's HTTP gateway at ``https://<canister-id>.raw.icp0.io``, and the
 reader needs a stock browser — no wallet, no extension, nothing installed.
 
 Each canister gets its own subdomain, therefore its own origin, therefore its
@@ -101,6 +101,19 @@ IDENTITY = "fused-render"
 #: install guide's Docker/WSL note is about.
 ENVIRONMENT = "ic"
 NETWORK = "ic"
+
+#: The gateway host an app is served from. ``raw`` skips the HTTP gateway's
+#: response certification, which an asset canister does not currently satisfy —
+#: the certified host answers 503 "Response Verification Error" where this one
+#: serves the file.
+#:
+#: **This is an origin, so it is not a free choice.** A rung-1 app keeps its
+#: state in ``localStorage``, which is scoped to the exact host; moving between
+#: ``raw.icp0.io`` and ``icp0.io`` later is a move to a new origin, and every
+#: reader's saved progress stays behind on the old one. Changing this constant
+#: is the same class of act as renaming a Cloudflare project, and the same
+#: sentence in ``runs.py`` applies to it.
+GATEWAY_HOST = "raw.icp0.io"
 
 #: The recipe that turns a directory of files into a served canister. Pinned:
 #: an unpinned recipe would change what our publishes deploy without a commit
@@ -545,7 +558,7 @@ class Icp:
                 "with everything in it. Keep an eye on the balance below."
             )
         return PublishResult(
-            url=f"https://{canister_id}.icp0.io",
+            url=f"https://{canister_id}.{GATEWAY_HOST}",
             project=canister,
             updated_in_place=existing_id is not None,
             notes=notes,
@@ -903,7 +916,7 @@ class Icp:
         return PublishRecord(
             target=self.id,
             project=canister,
-            url=f"https://{canister_id}.icp0.io",
+            url=f"https://{canister_id}.{GATEWAY_HOST}",
             extra={"canister_id": canister_id},
         )
 

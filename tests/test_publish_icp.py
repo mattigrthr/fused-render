@@ -380,7 +380,7 @@ def test_creating_a_second_identity_is_refused_rather_than_shadowing_the_first(f
 
 def test_a_first_publish_returns_the_gateway_url_for_the_minted_canister(funded, site):
     result = Icp().publish(site, name="Chinese HSK Cards", record=None)
-    assert result.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.icp0.io"
+    assert result.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.raw.icp0.io"
     assert result.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
     assert result.project == "chinese-hsk-cards"
     assert result.updated_in_place is False
@@ -476,7 +476,7 @@ def test_a_re_publish_upgrades_the_same_canister_rather_than_minting_a_second(fu
     record = PublishRecord(
         target="icp-canister",
         project="demo",
-        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.icp0.io",
+        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.raw.icp0.io",
         extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-vvvvv"},
     )
     funded.update(mint="never-should-be-minted")
@@ -497,7 +497,7 @@ def test_an_upload_that_runs_out_of_cycles_keeps_the_canister_it_already_paid_fo
     salvage = excinfo.value.salvage
     assert salvage is not None
     assert salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
-    assert salvage.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.icp0.io"
+    assert salvage.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.raw.icp0.io"
 
 
 def test_running_out_of_cycles_is_surfaced_as_itself_not_as_cli_stderr(funded, site):
@@ -543,7 +543,7 @@ def test_a_re_publish_is_not_blocked_by_a_low_balance(funded, site):
     record = PublishRecord(
         target="icp-canister",
         project="demo",
-        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.icp0.io",
+        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.raw.icp0.io",
         extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-vvvvv"},
     )
     assert Icp().publish(site, name="demo", record=record).updated_in_place

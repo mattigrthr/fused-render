@@ -571,9 +571,12 @@ function Funding({
 }) {
   if (!funding)
     return <p className="app-publish-caption app-publish-auth">Checking the balance…</p>;
-  // Funded and already live: the cycles readout below carries the number, and a
-  // second panel saying the same thing is noise.
-  if (funding.funded && published) return null;
+  // Already live: this panel is about affording a canister, and there is one.
+  // What matters from here is the canister's OWN runway, which the cycles
+  // readout below carries — the principal's balance is no longer the number
+  // that decides anything, and showing it as a blocker beside a working app
+  // says the app is broken when it is not.
+  if (published) return null;
   // Funded is the only state that lets Publish run, so anything else with an
   // identity behind it is the answer to "why is that button grey".
   const short = funding.identity && !funding.funded;
