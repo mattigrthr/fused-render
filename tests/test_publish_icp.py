@@ -70,12 +70,20 @@ if argv[:2] == ["cycles", "balance"]:
     finish("%s cycles.\n" % state["balance"])
 if argv[:2] == ["canister", "status"]:
     if state.get("status_fails"): finish("", 1, "canister not found")
+    # Both shapes are icp 1.4's, verbatim, on a canister the caller controls:
+    # underscore-separated STRINGS in --json, and a table whose balance field is
+    # called "Cycles" while two other lines also contain that word.
+    def sep(n): return "{:_}".format(int(n)).replace(",", "_")
+    cyc, idle = state.get("canister_cycles", 0), state.get("idle", 0)
     if state.get("status_json", True):
-        finish(json.dumps({"status": "running", "cycles": state.get("canister_cycles", 0),
-                           "idle_cycles_burned_per_day": state.get("idle", 0)}))
-    # Older builds have no --json and print a table instead.
-    finish("Status: running\nBalance: %s Cycles\nIdle cycles burned per day: %s\n"
-           % (state.get("canister_cycles", 0), state.get("idle", 0)))
+        finish(json.dumps({"id": "aaaaa-bbbbb-ccccc-ddddd-eeeee", "status": "Running",
+                           "settings": {"reserved_cycles_limit": sep(5_000_000_000_000)},
+                           "cycles": sep(cyc), "reserved_cycles": "0",
+                           "idle_cycles_burned_per_day": sep(idle)}))
+    # Older builds have no --json and print the table instead.
+    finish("Canister Status Report:\n  Status: Running\n"
+           "  Reserved cycles limit: %s\n  Cycles: %s\n  Reserved cycles: 0\n"
+           "  Idle cycles burned per day: %s\n" % (sep(5_000_000_000_000), sep(cyc), sep(idle)))
 if argv[:1] == ["deploy"]:
     # The canister is created BEFORE the upload: the mapping lands either way.
     if not os.path.exists(IDS):
@@ -518,6 +526,63 @@ def test_a_cycles_figure_is_read_out_of_whatever_icp_printed(text, expected):
     from fused_render.publish.icp import _cycles_from_text
 
     assert _cycles_from_text(text) == expected
+
+
+# The two shapes icp 1.4 actually prints for a canister its caller CONTROLS,
+# copied from a real report. Worth pinning verbatim: a caller who is not a
+# controller gets the public state tree instead, which carries no cycles at all,
+# so this is the one output shape that cannot be checked without owning one.
+_REAL_STATUS_JSON = (
+    '{"id":"7m5ru-hiaaa-aaaab-qe6hq-cai","status":"Running","settings":{"controllers":'
+    '["kl6gl-oaqam-gwxjv-nig2x-lfoba-lbgn3-k3ku6-osrqf-de6xi-4rctk-vae"],'
+    '"freezing_threshold":"2_592_000","reserved_cycles_limit":"5_000_000_000_000",'
+    '"wasm_memory_limit":"3_221_225_472"},"memory_size":"2_349_181_748",'
+    '"cycles":"3_835_149_822_819","reserved_cycles":"0",'
+    '"idle_cycles_burned_per_day":"60_880_991_301"}'
+)
+
+_REAL_STATUS_TABLE = """Canister Id: 7m5ru-hiaaa-aaaab-qe6hq-cai
+Canister Status Report:
+  Status: Running
+  Freezing threshold: 2_592_000
+  Reserved cycles limit: 5_000_000_000_000
+  Memory size: 2_349_181_748
+  Cycles: 3_835_260_886_361
+  Reserved cycles: 0
+  Idle cycles burned per day: 60_880_991_301
+"""
+
+
+def test_the_json_report_is_read_as_the_strings_icp_actually_emits():
+    # Every figure is a STRING with underscore separators, not a number. Reading
+    # it as JSON and expecting an int gets nothing.
+    from fused_render.publish.icp import _first_number
+
+    assert _first_number(json.loads(_REAL_STATUS_JSON), "cycles") == 3_835_149_822_819
+    assert (
+        _first_number(json.loads(_REAL_STATUS_JSON), "idle_cycles_burned_per_day")
+        == 60_880_991_301
+    )
+
+
+def test_the_table_balance_is_the_cycles_line_and_not_the_two_that_rhyme_with_it():
+    # "Reserved cycles limit" is 5T on a canister holding 3.8T, and "Idle cycles
+    # burned per day" is a rate. An unanchored search for the word would return
+    # one of them — a number that is not wrong so much as about something else,
+    # which is the kind of readout an author acts on.
+    reading = Icp()._labelled(_REAL_STATUS_TABLE, r"^[ \t]*(?:cycles|(?:cycle[s]? )?balance)")
+    assert reading == 3_835_260_886_361
+
+
+def test_a_canister_with_nothing_left_reads_as_zero_not_as_unreadable():
+    # The difference between "0 cycles, this is about to be deleted with every
+    # reader's progress in it" and a blank panel.
+    from fused_render.publish.icp import _field_number
+
+    assert _field_number("0") == 0
+    assert _field_number("0 cycles") == 0
+    assert _field_number("3_835_149_822_819") == 3_835_149_822_819
+    assert _field_number("not a number") is None
 
 
 @pytest.mark.parametrize(

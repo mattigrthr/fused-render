@@ -324,13 +324,28 @@ Checked against a real `icp 1.4.0`:
 | `icp deploy -e ic --identity <name> --yes` | `-e`, never `-n`; `ic` and `local` are environments every project has |
 | the synthesized `icp.yaml` | `icp build -e ic` succeeds on it, so the manifest shape and `@dfinity/static-site@v0.3.3` are right |
 | `.icp/data/mappings/ic.ids.json` | icp-cli's own documented location for mainnet ids |
+| `icp canister status <id> -e ic --identity <name>` | checked on a canister its caller controls — see below |
 
-Still unverified, because it needs a canister we control: the field names inside
-`icp canister status --json`. On a canister the caller does not control the CLI
-falls back to public state-tree information, which carries no cycles at all. The
-reader hunts for the field by name and falls back to the human table, and if
-both miss it says the canister is fine and the number is not readable — which is
-the honest failure, but it is a guess until someone owns a canister to check.
+`canister status` is the one command whose useful output you cannot see without
+owning the canister: a caller who is not a controller silently gets the public
+state tree instead, which carries no cycles at all. On a controlled canister,
+`--json` reports
+
+```
+"cycles":"3_835_149_822_819", "idle_cycles_burned_per_day":"60_880_991_301"
+```
+
+— **strings with underscore separators, not numbers** — and the human table
+calls the balance `Cycles:`, on a report that also contains `Reserved cycles
+limit:` (5T on a canister holding 3.8T) and `Idle cycles burned per day:`. So
+the table label is anchored to the start of its line: an unanchored search for
+the word returns the reserved limit, which is not a wrong number so much as a
+number about something else, and the author would act on it.
+
+A field whose name already said "cycles" is parsed strictly, which is what lets
+a bare `0` be believed rather than read as "could not read". That distinction is
+the difference between a panel that says a canister is about to be deleted with
+every reader's progress in it and a panel that says nothing.
 
 ## Funding
 

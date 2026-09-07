@@ -215,6 +215,21 @@ def _cycles_from_text(text: str) -> int | None:
     return None
 
 
+def _field_number(value: str) -> int | None:
+    """A number out of a field whose NAME already said it was cycles.
+
+    The label did the disambiguating, so a bare ``0`` is believable here in a
+    way it is not when scraping prose — and ``0`` is exactly what icp prints for
+    a canister with nothing left, which is the one reading an author must not
+    see as "could not read". Values carrying their own units fall through to the
+    fuzzy reader.
+    """
+    match = re.fullmatch(r"([0-9][0-9_,]*)\s*(?:cycles?)?", value.strip(), re.I)
+    if match:
+        return int(match.group(1).replace("_", "").replace(",", ""))
+    return _cycles_from_text(value)
+
+
 def _first_number(payload: object, *keys: str) -> int | None:
     """The first of ``keys`` present anywhere in a decoded JSON document.
 
@@ -231,7 +246,9 @@ def _first_number(payload: object, *keys: str) -> int | None:
             if isinstance(value, (int, float)):
                 return int(value)
             if isinstance(value, str):
-                parsed = _cycles_from_text(value)
+                # icp 1.4 reports every cycles figure in --json as a STRING with
+                # underscore separators: {"cycles": "3_835_149_822_819"}.
+                parsed = _field_number(value)
                 if parsed is not None:
                     return parsed
         for value in payload.values():
@@ -597,6 +614,13 @@ class Icp:
         is not on every command in every build. The fallback is where a parser
         like this rots, so both paths hunt for the field by name rather than by
         position.
+
+        Both shapes are checked against icp 1.4 on a canister its caller
+        controls, which matters because the report is not the same otherwise:
+        a caller who is not a controller gets the public state tree, which
+        carries no cycles at all. ``--json`` gives ``"cycles"`` and
+        ``"idle_cycles_burned_per_day"`` at the top level, both as STRINGS with
+        underscore separators (``"3_835_149_822_819"``), not as numbers.
         """
         canister_id = self._recorded_id(record)
         if canister_id is None:
@@ -620,7 +644,7 @@ class Icp:
         balance = _first_number(payload, "cycles", "balance", "cycle_balance")
         idle = _first_number(payload, "idle_cycles_burned_per_day", "idle_cycles_burned")
         if balance is None:
-            balance = self._labelled(text, r"(?:cycle[s]?\s*)?balance")
+            balance = self._labelled(text, r"^[ \t]*(?:cycles|(?:cycle[s]? )?balance)")
         if idle is None:
             idle = self._labelled(text, r"idle[ _]cycles[ _]burned[ _](?:per[ _]day|/day)")
         if balance is None:
@@ -636,9 +660,18 @@ class Icp:
 
     @staticmethod
     def _labelled(text: str, label: str) -> int | None:
-        """A number printed after ``label:`` in a human-formatted table."""
-        match = re.search(label + r"\s*[:=]\s*([^\n]+)", text, re.I)
-        return _cycles_from_text(match.group(1)) if match else None
+        """A number printed after ``label:`` in a human-formatted table.
+
+        ``re.M`` so a label can anchor to the start of its line, which the
+        balance one has to: icp 1.4 calls the field ``Cycles``, and the same
+        report also carries ``Reserved cycles`` and ``Idle cycles burned per
+        day``. An unanchored search for the word would happily return the
+        reserved-cycles limit as the balance — a number that is not wrong so
+        much as about something else, which is the kind of readout an author
+        acts on and should not have.
+        """
+        match = re.search(label + r"\s*[:=]\s*([^\n]+)", text, re.I | re.M)
+        return _field_number(match.group(1)) if match else None
 
     def balance(self) -> int | None:
         """The identity's cycles, or ``None`` when we could not read them.
