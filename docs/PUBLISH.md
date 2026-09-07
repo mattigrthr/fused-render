@@ -299,6 +299,39 @@ Two things are worth stating plainly because they are easy to get wrong:
 - **We only ever target mainnet** (`-e ic`) and never start a local replica,
   which is the only thing the install guide's Docker/WSL note is about.
 
+### The commands, and which of them are checked
+
+Every subprocess names the identity: `--identity fused-render` on `deploy`,
+`cycles balance` and `canister status`. Without it icp-cli acts as whichever
+identity the author has made default, which is very likely one of their own —
+the pre-flight check would read a stranger's wallet, the panel would print a
+principal the balance beside it does not belong to, and the deploy would mint
+the canister under a key fused-render cannot reach again. `identity principal`
+has no positional form; the flag is the only way to ask about ours.
+
+`deploy` also carries `--yes`. stdin is closed, so a confirmation prompt is not
+a question — it is a subprocess that sits there until the thirty-minute timeout
+while the Publish page says "Uploading to the provider".
+
+Checked against a real `icp 1.4.0`:
+
+| Command | Note |
+| --- | --- |
+| `icp identity new <name> --storage keyring --output-seed <file>` | `--storage`, **not** `--storage-mode`, which 1.4 rejects outright |
+| `icp identity principal --identity <name>` | exits non-zero with "no identity found" before creation |
+| `icp cycles balance -n ic --identity <name> --json` | prints `{"balance":"2_000_602_400_000 cycles"}` — a *string*, with separators and a unit |
+| `icp cycles transfer <amount> <principal> -n ic` | amount takes `k`/`m`/`b`/`t` suffixes in either case |
+| `icp deploy -e ic --identity <name> --yes` | `-e`, never `-n`; `ic` and `local` are environments every project has |
+| the synthesized `icp.yaml` | `icp build -e ic` succeeds on it, so the manifest shape and `@dfinity/static-site@v0.3.3` are right |
+| `.icp/data/mappings/ic.ids.json` | icp-cli's own documented location for mainnet ids |
+
+Still unverified, because it needs a canister we control: the field names inside
+`icp canister status --json`. On a canister the caller does not control the CLI
+falls back to public state-tree information, which carries no cycles at all. The
+reader hunts for the field by name and falls back to the human table, and if
+both miss it says the canister is fine and the number is not readable — which is
+the honest failure, but it is a guess until someone owns a canister to check.
+
 ## Funding
 
 There is nobody to sign in to on ICP, so `auth()` answers `ready` or

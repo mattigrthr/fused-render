@@ -188,12 +188,20 @@ def format_cycles(amount: int) -> str:
 def _cycles_from_text(text: str) -> int | None:
     """A cycles figure out of whatever icp-cli printed.
 
-    Handles the three shapes the CLIs in this family use: a bare integer with
-    underscore separators (``3_100_000_000_000``), a suffixed figure
-    (``3.1 TC``, ``2T``), and the same wrapped in prose. Returns ``None`` rather
-    than guessing when none of them match — a balance we misread is a pre-flight
-    check that passes on a principal with nothing in it.
+    icp 1.4 prints ``2_000_602_400_000 cycles`` from ``cycles balance``, in the
+    human line and inside ``--json`` alike, so that shape is tried FIRST and is
+    the only one that can read a small number: it is the one match where the
+    unit is spelled out, which is what makes a bare ``0`` safe to believe. A
+    zero read as "could not read" would skip the pre-flight check on exactly the
+    principal that most needs it.
+
+    Then the other shapes the CLIs in this family use: a suffixed figure
+    (``3.1 TC``, ``2T``) and a bare integer with separators. Returns ``None``
+    rather than guessing when none of them match.
     """
+    united = re.search(r"([0-9][0-9_,]*(?:\.[0-9]+)?)\s*cycles?\b", text, re.I)
+    if united:
+        return int(float(united.group(1).replace("_", "").replace(",", "")))
     suffixed = re.search(
         r"([0-9][0-9_,]*(?:\.[0-9]+)?)\s*(TC|T|BC|B|MC|M|KC|K)\b", text
     )
@@ -430,7 +438,7 @@ class Icp:
         try:
             try:
                 proc = self._run(
-                    ["deploy", "--environment", ENVIRONMENT],
+                    ["deploy", "--environment", ENVIRONMENT, "--identity", IDENTITY, "--yes"],
                     timeout=DEPLOY_TIMEOUT_S,
                     cwd=project,
                 )
@@ -543,18 +551,19 @@ class Icp:
                 "anywhere fused-render can read — export the key with "
                 "`icp identity export fused-render` if you need it elsewhere."
             )
+        # 0700 on the DIRECTORY rather than 0600 on the file: the protection is
+        # the same (nobody else can traverse in to reach it), and pre-creating
+        # the file would bet on `--output-seed` being willing to overwrite one,
+        # which is not something to discover at the moment an author is minting
+        # their only copy of a seed phrase. The whole dir goes in `finally`.
         work = tempfile.mkdtemp(prefix="fused-icp-")
         os.chmod(work, 0o700)
         seed_path = os.path.join(work, "seed")
         try:
-            # Created 0600 up front rather than trusting the CLI's umask: the
-            # file exists for the length of one subprocess, but for that length
-            # it holds a credential that moves real money.
-            os.close(os.open(seed_path, os.O_CREAT | os.O_WRONLY, 0o600))
             proc = self._run(
                 [
                     "identity", "new", IDENTITY,
-                    "--storage-mode", "keyring",
+                    "--storage", "keyring",
                     "--output-seed", seed_path,
                 ],
                 timeout=IDENTITY_TIMEOUT_S,
@@ -596,7 +605,10 @@ class Icp:
                 "read. Publish it first."
             )
         proc = self._run(
-            ["canister", "status", canister_id, "--network", NETWORK, "--json"],
+            [
+                "canister", "status", canister_id,
+                "--network", NETWORK, "--identity", IDENTITY, "--json",
+            ],
             timeout=QUERY_TIMEOUT_S,
         )
         if proc.returncode != 0:
@@ -636,7 +648,8 @@ class Icp:
         not a reason to refuse a publish the author has already paid for.
         """
         proc = self._run(
-            ["cycles", "balance", "--network", NETWORK], timeout=QUERY_TIMEOUT_S
+            ["cycles", "balance", "--network", NETWORK, "--identity", IDENTITY, "--json"],
+            timeout=QUERY_TIMEOUT_S,
         )
         if proc.returncode != 0:
             return None
@@ -649,24 +662,21 @@ class Icp:
     def _principal(self) -> str | None:
         """The principal of our identity, or ``None`` when there is not one yet.
 
-        Asked two ways because how icp-cli takes an identity name on this
-        command — a positional, or the global ``--identity`` — is not something
-        to bet an author's principal on. Getting it wrong in one direction reads
-        as "you have no identity", which would send someone who already funded a
-        principal back through creating a second one. The second form only runs
-        when the first fails, so the happy path is still one call.
+        ``icp identity principal`` reports the SELECTED identity and takes no
+        positional name, so ``--identity`` is not decoration: without it this
+        would answer with whichever identity the author happens to have made
+        default, and the Publish page would print a principal that our deploys
+        never use and our balance is not on.
         """
-        for args in (
-            ["identity", "principal", IDENTITY],
-            ["identity", "principal", "--identity", IDENTITY],
-        ):
-            proc = self._run(args, timeout=QUERY_TIMEOUT_S)
-            if proc.returncode != 0:
-                continue
-            match = _PRINCIPAL.search(proc.stdout or "")
-            if match:
-                return match.group(0)
-        return None
+        proc = self._run(
+            ["identity", "principal", "--identity", IDENTITY], timeout=QUERY_TIMEOUT_S
+        )
+        if proc.returncode != 0:
+            # "no identity found with name `fused-render`" — the pre-creation
+            # state, not a failure worth surfacing.
+            return None
+        match = _PRINCIPAL.search(proc.stdout or "")
+        return match.group(0) if match else None
 
     # ---- the project icp deploy expects -------------------------------------
 

@@ -255,8 +255,10 @@ def test_the_phrase_is_read_from_a_file_and_never_off_stdout(icp):
     assert "--output-seed" in new
     assert "-q" not in new
     # Keyring, not password-encrypted (a prompt on every publish) and not
-    # plaintext (a key that moves real money in a readable file).
-    assert new[new.index("--storage-mode") + 1] == "keyring"
+    # plaintext (a key that moves real money in a readable file). The flag is
+    # `--storage`; icp 1.4 rejects `--storage-mode` outright, which is how this
+    # shipped broken — every Fund cycles press failed on an argument error.
+    assert new[new.index("--storage") + 1] == "keyring"
 
 
 def test_a_locked_keyring_says_so_and_does_not_fall_back_to_plaintext(icp):
@@ -290,7 +292,41 @@ def test_a_first_publish_returns_the_gateway_url_for_the_minted_canister(funded,
 def test_the_deploy_targets_mainnet_and_never_a_local_replica(funded, site):
     Icp().publish(site, name="demo", record=None)
     deploy = [c for c in funded.read()["calls"] if c[:1] == ["deploy"]][0]
-    assert deploy == ["deploy", "--environment", "ic"]
+    assert deploy[:3] == ["deploy", "--environment", "ic"]
+
+
+def test_every_command_that_spends_or_reads_runs_as_our_own_identity(funded, site):
+    # icp acts as the DEFAULT identity unless told otherwise, and an author who
+    # publishes from this machine almost certainly has one of their own. Without
+    # --identity the pre-flight check would read someone else's wallet, the
+    # panel would print a principal the balance beside it does not belong to,
+    # and the deploy would mint the canister under a key fused-render cannot
+    # reach again.
+    icp = Icp()
+    icp.publish(site, name="demo", record=None)
+    icp.balance()
+    icp.cycles(PublishRecord(target=icp.id, project="demo", url="",
+                             extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"}))
+    for call in funded.read()["calls"]:
+        assert call[call.index("--identity") + 1] == "fused-render", call
+
+
+def test_the_deploy_never_waits_on_a_prompt(funded, site):
+    # stdin is closed, so a confirmation prompt is not a question — it is a
+    # subprocess that sits there until the 30-minute timeout, which the Publish
+    # page renders as "Uploading to the provider" for half an hour.
+    Icp().publish(site, name="demo", record=None)
+    deploy = [c for c in funded.read()["calls"] if c[:1] == ["deploy"]][0]
+    assert "--yes" in deploy
+
+
+def test_the_principal_is_asked_for_by_flag_because_there_is_no_positional_form(icp):
+    icp.update(identity=True)
+    Icp().funding()
+    ask = [c for c in icp.read()["calls"] if c[:2] == ["identity", "principal"]][0]
+    # `icp identity principal fused-render` is an argument error in 1.4, and a
+    # bare `icp identity principal` answers for whichever identity is default.
+    assert ask == ["identity", "principal", "--identity", "fused-render"]
 
 
 def test_a_re_publish_upgrades_the_same_canister_rather_than_minting_a_second(funded, site):
@@ -463,6 +499,14 @@ def test_cycles_are_formatted_in_the_units_the_transfer_command_accepts(amount, 
 @pytest.mark.parametrize(
     "text,expected",
     [
+        # What icp 1.4 actually prints, in the human line and inside --json
+        # alike — checked against the installed binary.
+        ("Balance: 2_000_602_400_000 cycles", 2_000_602_400_000),
+        ('{"balance":"2_000_602_400_000 cycles"}', 2_000_602_400_000),
+        # A funded-looking zero. Reading this as "could not read" would skip the
+        # pre-flight check on the one principal that most needs it, and send the
+        # author into a deploy that fails after minting the canister.
+        ('{"balance":"0 cycles"}', 0),
         ("3_100_000_000_000 cycles", 3_100_000_000_000),
         ("Balance: 2.5 TC", 2_500_000_000_000),
         ("1T", 1_000_000_000_000),
