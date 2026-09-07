@@ -292,6 +292,16 @@ publish, and the record is seeded back into that file before a re-publish.
 Without it every re-publish looks like a first one, mints a new canister, and
 strands every reader's saved progress on an origin nobody will visit again.
 
+**A canister id is 5-5-5-5-3, not 5-5-5-5-5.** A principal is base32 of a CRC
+and a blob, written in groups of five, and the last group is whatever is left
+over — `ryjl3-tyaaa-aaaaa-aaaba-cai`, 23 characters. Recognising one is what
+decides whether a recorded canister is reused or a second one is minted, so it
+is worth saying that this pattern was wrong, matched nothing on the network,
+and was invisible for it: the test fixture's invented id had been shaped to the
+pattern rather than to a principal, so every test passed while every real
+canister was unrecognisable. The fixtures now use principal-shaped ids and real
+ids off the network are pinned as test data.
+
 **The mapping file is not written when a deploy fails.** Observed: a deploy
 created the canister, the plugin then refused the path, and `.icp/data/` was
 never touched — the id existed only on stdout, as

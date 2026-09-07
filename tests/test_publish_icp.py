@@ -78,7 +78,7 @@ if argv[:2] == ["canister", "status"]:
     def sep(n): return "{:_}".format(int(n)).replace(",", "_")
     cyc, idle = state.get("canister_cycles", 0), state.get("idle", 0)
     if state.get("status_json", True):
-        finish(json.dumps({"id": "aaaaa-bbbbb-ccccc-ddddd-eeeee", "status": "Running",
+        finish(json.dumps({"id": "aaaaa-bbbbb-ccccc-ddddd-cai", "status": "Running",
                            "settings": {"reserved_cycles_limit": sep(5_000_000_000_000)},
                            "cycles": sep(cyc), "reserved_cycles": "0",
                            "idle_cycles_burned_per_day": sep(idle)}))
@@ -96,11 +96,11 @@ if argv[:1] == ["deploy"]:
     # path and refuses anything else, AFTER the canister has been paid for.
     if os.path.isabs(site) or site.startswith("."):
         state["created"] = True
-        finish("Created canister %s with ID %s\n" % (name, state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-eeeee")),
+        finish("Created canister %s with ID %s\n" % (name, state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-cai")),
                1, "ERR caused by: plugin dir %r is not a safe relative path "
                   "(no absolute paths or '.' allowed)\n" % site)
     state["deployed_files"] = sorted(os.listdir(site)) if os.path.isdir(site) else None
-    minted = state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-eeeee")
+    minted = state.get("mint", "aaaaa-bbbbb-ccccc-ddddd-cai")
     # The canister is created BEFORE the upload.
     if not os.path.exists(IDS):
         state["created"] = True
@@ -380,8 +380,8 @@ def test_creating_a_second_identity_is_refused_rather_than_shadowing_the_first(f
 
 def test_a_first_publish_returns_the_gateway_url_for_the_minted_canister(funded, site):
     result = Icp().publish(site, name="Chinese HSK Cards", record=None)
-    assert result.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.raw.icp0.io"
-    assert result.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
+    assert result.url == "https://aaaaa-bbbbb-ccccc-ddddd-cai.raw.icp0.io"
+    assert result.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-cai"
     assert result.project == "chinese-hsk-cards"
     assert result.updated_in_place is False
     assert any("frozen" in n for n in result.notes)  # the dead man's switch, said once
@@ -410,7 +410,7 @@ def test_every_command_that_spends_or_reads_runs_as_our_own_identity(funded, sit
     icp.publish(site, name="demo", record=None)
     icp.balance()
     icp.cycles(PublishRecord(target=icp.id, project="demo", url="",
-                             extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"}))
+                             extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"}))
     for call in funded.read()["calls"]:
         assert call[call.index("--identity") + 1] == "fused-render", call
 
@@ -443,7 +443,7 @@ def test_a_canister_created_before_the_install_failed_is_still_recorded(funded, 
     with pytest.raises(PublishError) as excinfo:
         Icp().publish(site, name="demo", record=None)
     assert excinfo.value.salvage is not None
-    assert excinfo.value.salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
+    assert excinfo.value.salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-cai"
 
 
 def test_an_id_announced_for_another_canister_is_not_taken_as_ours(funded, site):
@@ -451,7 +451,7 @@ def test_an_id_announced_for_another_canister_is_not_taken_as_ours(funded, site)
 
     proc = subprocess.CompletedProcess(
         args=[], returncode=1,
-        stdout="Created canister some-other-app with ID bbbbb-ccccc-ddddd-eeeee-fffff\n",
+        stdout="Created canister some-other-app with ID bbbbb-ccccc-ddddd-eeeee-cai\n",
         stderr="",
     )
     assert _Icp()._minted(str(tempfile.mkdtemp()), "demo", proc) is None
@@ -467,6 +467,44 @@ def test_an_absolute_site_path_would_be_refused_after_the_canister_was_paid_for(
     assert funded.read()["deployed_dir"] == _SITE_SUBDIR
 
 
+@pytest.mark.parametrize(
+    "canister_id",
+    [
+        # Real ids, off the network. A principal is base32 written in groups of
+        # five and the LAST group is the remainder — a canister id is 23
+        # characters, so 5-5-5-5-3, never 5-5-5-5-5.
+        "ekjeb-biaaa-aaaae-ag5ba-cai",  # created by this adapter
+        "ryjl3-tyaaa-aaaaa-aaaba-cai",  # the ICP ledger
+        "7m5ru-hiaaa-aaaab-qe6hq-cai",
+    ],
+)
+def test_a_real_canister_id_is_recognised_as_one(canister_id):
+    # Written as five groups of five, the pattern matched every id in this file
+    # and none on the network, because the fixture's invented id had been shaped
+    # to the pattern instead of to a principal. The result was a recorded,
+    # paid-for canister reported as "the record does not name a canister" — the
+    # refusal that exists to prevent minting a second one, firing on a record
+    # that named the first one perfectly well.
+    from fused_render.publish.icp import _CANISTER_ID
+
+    assert _CANISTER_ID.match(canister_id)
+    record = PublishRecord(
+        target="icp-canister", project="demo",
+        url=f"https://{canister_id}.raw.icp0.io", extra={"canister_id": canister_id},
+    )
+    assert Icp()._recorded_id(record) == canister_id
+
+
+def test_a_real_announced_id_is_salvaged_from_stdout():
+    proc = subprocess.CompletedProcess(
+        args=[], returncode=1,
+        stdout="Created canister chinese-hsk-cards with ID ekjeb-biaaa-aaaae-ag5ba-cai\n",
+        stderr="",
+    )
+    found = Icp()._minted(tempfile.mkdtemp(), "chinese-hsk-cards", proc)
+    assert found == "ekjeb-biaaa-aaaae-ag5ba-cai"
+
+
 def test_a_re_publish_upgrades_the_same_canister_rather_than_minting_a_second(funded, site):
     # The single most important correctness requirement on this target. Our
     # project directory is synthesized per publish and thrown away, so the
@@ -476,14 +514,14 @@ def test_a_re_publish_upgrades_the_same_canister_rather_than_minting_a_second(fu
     record = PublishRecord(
         target="icp-canister",
         project="demo",
-        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.raw.icp0.io",
-        extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-vvvvv"},
+        url="https://zzzzz-yyyyy-xxxxx-wwwww-cai.raw.icp0.io",
+        extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-cai"},
     )
     funded.update(mint="never-should-be-minted")
     result = Icp().publish(site, name="demo", record=record)
     assert result.url == record.url
     assert result.updated_in_place is True
-    assert funded.read()["reused"] == {"demo": "zzzzz-yyyyy-xxxxx-wwwww-vvvvv"}
+    assert funded.read()["reused"] == {"demo": "zzzzz-yyyyy-xxxxx-wwwww-cai"}
     assert "created" not in funded.read()
 
 
@@ -496,8 +534,8 @@ def test_an_upload_that_runs_out_of_cycles_keeps_the_canister_it_already_paid_fo
         Icp().publish(site, name="demo", record=None)
     salvage = excinfo.value.salvage
     assert salvage is not None
-    assert salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-eeeee"
-    assert salvage.url == "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.raw.icp0.io"
+    assert salvage.extra["canister_id"] == "aaaaa-bbbbb-ccccc-ddddd-cai"
+    assert salvage.url == "https://aaaaa-bbbbb-ccccc-ddddd-cai.raw.icp0.io"
 
 
 def test_running_out_of_cycles_is_surfaced_as_itself_not_as_cli_stderr(funded, site):
@@ -543,8 +581,8 @@ def test_a_re_publish_is_not_blocked_by_a_low_balance(funded, site):
     record = PublishRecord(
         target="icp-canister",
         project="demo",
-        url="https://zzzzz-yyyyy-xxxxx-wwwww-vvvvv.raw.icp0.io",
-        extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-vvvvv"},
+        url="https://zzzzz-yyyyy-xxxxx-wwwww-cai.raw.icp0.io",
+        extra={"canister_id": "zzzzz-yyyyy-xxxxx-wwwww-cai"},
     )
     assert Icp().publish(site, name="demo", record=record).updated_in_place
 
@@ -563,7 +601,7 @@ def test_the_readout_is_a_runway_not_just_a_balance(funded):
     funded.update(canister_cycles=3_000_000_000_000, idle=100_000_000_000)
     record = PublishRecord(
         target="icp-canister", project="demo", url="https://x.icp0.io",
-        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"},
     )
     reading = Icp().cycles(record)
     assert reading.balance == 3_000_000_000_000
@@ -577,7 +615,7 @@ def test_a_status_without_json_is_read_off_the_table_instead(funded):
     funded.update(status_json=False, canister_cycles=2_500_000_000_000, idle=50_000_000_000)
     record = PublishRecord(
         target="icp-canister", project="demo", url="https://x.icp0.io",
-        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"},
     )
     reading = Icp().cycles(record)
     assert reading.balance == 2_500_000_000_000
@@ -588,7 +626,7 @@ def test_nothing_burned_is_an_unknown_runway_rather_than_forever(funded):
     funded.update(canister_cycles=1_000_000_000_000, idle=0)
     record = PublishRecord(
         target="icp-canister", project="demo", url="https://x.icp0.io",
-        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+        extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"},
     )
     assert Icp().cycles(record).days_left is None
 
@@ -718,10 +756,10 @@ def test_a_canister_with_nothing_left_reads_as_zero_not_as_unreadable():
 @pytest.mark.parametrize(
     "entry,expected",
     [
-        ({"demo": "aaaaa-bbbbb-ccccc-ddddd-eeeee"}, "aaaaa-bbbbb-ccccc-ddddd-eeeee"),
+        ({"demo": "aaaaa-bbbbb-ccccc-ddddd-cai"}, "aaaaa-bbbbb-ccccc-ddddd-cai"),
         # The mapping file gains fields; an id that moved inside an object is
         # still the id, and missing it costs a second canister on the next try.
-        ({"demo": {"id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"}}, "aaaaa-bbbbb-ccccc-ddddd-eeeee"),
+        ({"demo": {"id": "aaaaa-bbbbb-ccccc-ddddd-cai"}}, "aaaaa-bbbbb-ccccc-ddddd-cai"),
         ({"demo": "not-a-canister-id"}, None),
         ({}, None),
     ],

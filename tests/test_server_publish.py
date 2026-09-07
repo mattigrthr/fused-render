@@ -398,19 +398,19 @@ class _FakeFunded(_Fake):
                     target=self.id,
                     project=name,
                     url=CANISTER_URL,
-                    extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+                    extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"},
                 ),
             )
         return PublishResult(
             url=CANISTER_URL,
             project=name,
             updated_in_place=record is not None,
-            extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-eeeee"},
+            extra={"canister_id": "aaaaa-bbbbb-ccccc-ddddd-cai"},
         )
 
 
 SEED = "silk marble tunnel harvest cobalt errand willow ledger"
-CANISTER_URL = "https://aaaaa-bbbbb-ccccc-ddddd-eeeee.icp0.io"
+CANISTER_URL = "https://aaaaa-bbbbb-ccccc-ddddd-cai.icp0.io"
 
 
 @pytest.fixture

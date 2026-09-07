@@ -180,19 +180,30 @@ _IDS_FILE = os.path.join(".icp", "data", "mappings", f"{ENVIRONMENT}.ids.json")
 #: path only, so this is a location rather than a reference.
 _SITE_SUBDIR = "site"
 
+#: A canister id, textually. A principal is base32 of a CRC and a blob, written
+#: in groups of five — and the LAST group is whatever is left over, not another
+#: five. A canister id is 23 characters, so it is always 5-5-5-5-3::
+#:
+#:     ryjl3-tyaaa-aaaaa-aaaba-cai        the ICP ledger
+#:     ekjeb-biaaa-aaaae-ag5ba-cai        a canister this adapter created
+#:
+#: Written as five groups of five, this pattern matched no id on the network and
+#: every id in these tests, because the fixture's invented id was shaped to the
+#: pattern rather than to a principal. It is the difference between recognising
+#: a recorded canister and re-minting one, so the trailing group is spelled out.
+_CANISTER_ID_TEXT = r"[a-z0-9]{5}(?:-[a-z0-9]{5}){3}-[a-z0-9]{1,5}"
+_CANISTER_ID = re.compile(f"^{_CANISTER_ID_TEXT}$")
+
 #: How icp announces an id it just minted, on stdout, whether or not the rest of
 #: the deploy goes on to succeed. Read as a SECOND source for the canister id:
 #: the mapping file is authoritative, but a deploy that created the canister and
 #: then failed to sync into it left no mapping file at all — and dropping that
 #: id means the retry pays to mint another one at another origin.
 _CREATED_ID = re.compile(
-    r"created canister\s+(?P<name>\S+)\s+with id\s+(?P<id>[a-z0-9]{5}(?:-[a-z0-9]{5}){4})",
+    rf"created canister\s+(?P<name>\S+)\s+with id\s+(?P<id>{_CANISTER_ID_TEXT})",
     re.I,
 )
 
-#: A canister id: five groups of five lowercase base32 characters. Matching it
-#: is how we recognise one in a mapping file whose shape may grow fields.
-_CANISTER_ID = re.compile(r"^[a-z0-9]{5}(-[a-z0-9]{5}){4}$")
 
 #: A principal, which is the same alphabet in a variable number of groups.
 _PRINCIPAL = re.compile(r"\b[a-z0-9]{5}(?:-[a-z0-9]{3,5}){3,10}\b")
