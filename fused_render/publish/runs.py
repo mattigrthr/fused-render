@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 from fused_render.app_listing import app_entry
 from fused_render.export import ExportError, export_page
+from fused_render.publish import cycles as cycles_cache
 from fused_render.publish import record as record_store
 from fused_render.publish import registry, site as site_builder
 from fused_render.publish.adapter import PublishError, PublishRecord
@@ -159,6 +160,10 @@ def plan(app_dir: str, *, include: list[str] | None = None, exclude: list[str] |
         )
         run = get(app_dir, adapter.id)
         described["run"] = run.public() if run else None
+        # The LAST reading, not a fresh one: this route runs no provider CLI.
+        # A cached number with an "as of" beside it is worth more on first paint
+        # than a spinner, and the page refreshes a stale one itself.
+        described["cycles"] = cycles_reading(app_dir, adapter.id) if described["funding"] else None
         targets.append(described)
     return {
         "app_dir": os.path.abspath(app_dir),
@@ -172,6 +177,27 @@ def plan(app_dir: str, *, include: list[str] | None = None, exclude: list[str] |
         "packages": elig.pyodide_packages,
         "capability_labels": registry.capability_labels(),
         "targets": targets,
+    }
+
+
+def cycles_reading(app_dir: str, target: str) -> dict | None:
+    """One target's cached cycles readout for this app, as the API returns it.
+
+    ``fresh`` is what the page branches on: false means the reading is older
+    than a day and worth refreshing, not that it is wrong. ``days_left`` is the
+    figure that matters — a canister that runs out is frozen and eventually
+    deleted with everything in it, so the runway is the number, and the balance
+    is the supporting detail.
+    """
+    reading = cycles_cache.load(app_dir, target)
+    if reading is None:
+        return None
+    return {
+        "balance": reading.balance,
+        "idle_burned_per_day": reading.idle_burned_per_day,
+        "read_at": reading.read_at,
+        "days_left": reading.days_left,
+        "fresh": cycles_cache.is_fresh(reading),
     }
 
 
@@ -278,6 +304,18 @@ def _execute(run, adapter, page, elig: Eligibility, *, include, exclude, project
     except (PublishError, ExportError) as exc:
         run.state = "error"
         run.error = str(exc)
+        # A failure that nonetheless minted the deployment's identity. Some
+        # providers create the thing the origin is named after and only then
+        # upload into it, so the id can exist — paid for — behind an error. Not
+        # recording it makes the retry mint a SECOND one at a second origin,
+        # which is the stranded-progress failure record.py exists to prevent,
+        # reached the one way the record's own contract does not cover.
+        salvage = getattr(exc, "salvage", None)
+        if salvage is not None:
+            try:
+                record_store.save(run.app_dir, salvage)
+            except PublishError as save_exc:
+                run.error = f"{run.error}\n\n{save_exc}"
     except Exception as exc:  # noqa: BLE001 — a bug here must not lose the run
         run.state = "error"
         run.error = f"{type(exc).__name__}: {exc}"

@@ -3,10 +3,16 @@ import {
   PHASE_ORDER,
   canPublish,
   displayUrl,
+  formatCycles,
   phaseProgress,
   pollDelay,
+  readingAge,
   requirements,
+  runwayLabel,
+  runwayTone,
   type PublishAuth,
+  type PublishCycles,
+  type PublishFunding,
   type PublishPlan,
   type PublishRun,
   type PublishTarget,
@@ -34,10 +40,37 @@ function target(over: Partial<PublishTarget> = {}): PublishTarget {
     blurb: "",
     capabilities: [],
     auth: null,
+    funding: false,
     eligible: true,
     reasons: [],
     published: null,
     run: null,
+    cycles: null,
+    ...over,
+  };
+}
+
+function funding(over: Partial<PublishFunding> = {}): PublishFunding {
+  return {
+    funded: true,
+    identity: true,
+    principal: "un4fu-tqaaa-aaaab-qadjq-cai",
+    balance: 2e12,
+    minimum: 1e12,
+    transfer_command: "icp cycles transfer 1T un4fu-tqaaa-aaaab-qadjq-cai -n ic",
+    detail: "",
+    help_url: null,
+    ...over,
+  };
+}
+
+function cycles(over: Partial<PublishCycles> = {}): PublishCycles {
+  return {
+    balance: 3e12,
+    idle_burned_per_day: 1e11,
+    read_at: new Date().toISOString(),
+    days_left: 30,
+    fresh: true,
     ...over,
   };
 }
@@ -126,5 +159,100 @@ describe("requirements", () => {
   it("falls back to the wire value for a cell this build lacks a label for", () => {
     const grown = { ...plan, runtime: "runtime:wasi" } as PublishPlan;
     expect(requirements(grown)[0]).toBe("runtime:wasi");
+  });
+});
+
+describe("canPublish with a funded target", () => {
+  const icp = target({ id: "icp-canister", funding: true, auth: auth("ready") });
+
+  it("needs cycles as well as eligibility and a ready CLI", () => {
+    expect(canPublish(icp, auth("ready"), funding())).toBe(true);
+    expect(canPublish(icp, auth("ready"), funding({ funded: false }))).toBe(false);
+  });
+
+  it("does not grey the button while the funding probe is still in flight", () => {
+    // The probe is a second request. A button that goes dead for two seconds
+    // because a provider CLI is slow reads as a refusal, and the server checks
+    // again before it spends anything.
+    expect(canPublish(icp, auth("ready"), null)).toBe(true);
+  });
+
+  it("ignores funding entirely for a target that has none", () => {
+    const pages = target({ auth: auth("ready") });
+    expect(canPublish(pages, auth("ready"), funding({ funded: false }))).toBe(true);
+  });
+});
+
+describe("formatCycles", () => {
+  it("uses the units the transfer command accepts", () => {
+    // A figure read on the page has to be typeable back into a terminal, and
+    // fifteen-digit numbers do not compare.
+    expect(formatCycles(1e12)).toBe("1T");
+    expect(formatCycles(2.5e12)).toBe("2.5T");
+    expect(formatCycles(8.5e11)).toBe("850B");
+    expect(formatCycles(12e6)).toBe("12M");
+    expect(formatCycles(999)).toBe("999");
+  });
+
+  it("agrees with the transfer command the server builds", () => {
+    // Both sides format the minimum; a mismatch would print a command whose
+    // amount is not the one the panel says is needed.
+    expect(funding().transfer_command).toContain(formatCycles(funding().minimum));
+  });
+});
+
+describe("runwayTone", () => {
+  it("escalates well before the canister actually freezes", () => {
+    // Running out means frozen and eventually deleted WITH ALL ITS STATE. A
+    // number that only goes red on the last day is a warning nobody can act on.
+    expect(runwayTone(cycles({ days_left: 200 }))).toBe("ok");
+    expect(runwayTone(cycles({ days_left: 20 }))).toBe("low");
+    expect(runwayTone(cycles({ days_left: 3 }))).toBe("critical");
+  });
+
+  it("treats an unknown burn as unknown, not as fine", () => {
+    expect(runwayTone(cycles({ days_left: null }))).toBe("unknown");
+  });
+});
+
+describe("runwayLabel", () => {
+  it("says days until days stop being the useful unit", () => {
+    expect(runwayLabel(cycles({ days_left: 0.4 }))).toBe("less than a day left");
+    expect(runwayLabel(cycles({ days_left: 1.9 }))).toBe("about 1 day left");
+    expect(runwayLabel(cycles({ days_left: 45 }))).toBe("about 45 days left");
+    expect(runwayLabel(cycles({ days_left: 89 }))).toBe("about 89 days left");
+    expect(runwayLabel(cycles({ days_left: 90 }))).toBe("about 3 months left");
+  });
+
+  it("hands over to years, because nobody divides 55 months in their head", () => {
+    // The real reading off a freshly funded canister: 1.5T at 905.5M/day.
+    expect(runwayLabel(cycles({ days_left: 1_495_663_094_035 / 905_511_785 }))).toBe(
+      "about 4 years, 7 months left",
+    );
+    expect(runwayLabel(cycles({ days_left: 400 }))).toBe("about 1 year, 1 month left");
+  });
+
+  it("does not trail a zero remainder", () => {
+    expect(runwayLabel(cycles({ days_left: 365 }))).toBe("about 1 year left");
+    expect(runwayLabel(cycles({ days_left: 730 }))).toBe("about 2 years left");
+  });
+
+  it("has nothing to say when there is no burn figure", () => {
+    expect(runwayLabel(cycles({ days_left: null }))).toBeNull();
+  });
+});
+
+describe("readingAge", () => {
+  it("labels a stale reading rather than hiding it", () => {
+    // A runway with an "as of" on it beats a spinner.
+    const now = Date.parse("2026-09-06T12:00:00Z");
+    expect(readingAge(cycles({ read_at: "2026-09-06T11:40:00Z" }), now)).toBe("as of just now");
+    expect(readingAge(cycles({ read_at: "2026-09-06T06:00:00Z" }), now)).toBe("as of 6h ago");
+    expect(readingAge(cycles({ read_at: "2026-09-05T11:00:00Z" }), now)).toBe("as of yesterday");
+    expect(readingAge(cycles({ read_at: "2026-09-01T12:00:00Z" }), now)).toBe("as of 5 days ago");
+  });
+
+  it("does not pretend to know when a stamp is unreadable", () => {
+    expect(readingAge(cycles({ read_at: "last tuesday" }))).toBe("as of an unknown time");
   });
 });

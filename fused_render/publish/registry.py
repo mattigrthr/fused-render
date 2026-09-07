@@ -22,6 +22,7 @@ from fused_render.publish.adapter import (
     CAPABILITY_LABELS,
     AuthState,
     Capability,
+    FundedTarget,
     PublishAdapter,
 )
 from fused_render.publish.eligibility import Eligibility
@@ -79,8 +80,9 @@ def _adapters() -> tuple[PublishAdapter, ...]:
     Adding a provider is one line here.
     """
     from fused_render.publish.cloudflare import CloudflarePages
+    from fused_render.publish.icp import Icp
 
-    return (CloudflarePages(),)
+    return (CloudflarePages(), Icp())
 
 
 def targets() -> tuple[PublishAdapter, ...]:
@@ -112,6 +114,12 @@ def describe(adapter: PublishAdapter, auth: AuthState | None = None) -> dict:
         "label": adapter.label,
         "blurb": adapter.blurb,
         "capabilities": sorted(c.value for c in adapter.capabilities),
+        # Whether this target costs the author money directly, and therefore
+        # has a Fund cycles panel. The adapter's own SHAPE answers it — a
+        # target that implements FundedTarget has funding, one that does not
+        # has none — so the Publish page cannot grow an empty funding panel for
+        # a provider that has nothing to fund.
+        "funding": isinstance(adapter, FundedTarget),
         "auth": None
         if auth is None
         else {

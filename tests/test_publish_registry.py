@@ -104,3 +104,25 @@ def test_describe_omits_auth_unless_it_was_probed():
     # The Publish page wants both; a caller listing targets should not have to
     # shell out to every provider CLI to do it.
     assert registry.describe(_Target())["auth"] is None
+
+
+def test_the_icp_adapter_is_offered_and_declares_funding():
+    # Adding a provider is a class and one registry line — and whether it has a
+    # Fund cycles panel comes from its SHAPE, not from a list of ids somewhere
+    # that could disagree with the adapter.
+    ids = [a.id for a in registry.targets()]
+    assert "icp-canister" in ids
+    described = {registry.describe(a)["id"]: registry.describe(a) for a in registry.targets()}
+    assert described["icp-canister"]["funding"] is True
+    assert described["cloudflare-pages"]["funding"] is False
+
+
+def test_both_rung_one_targets_refuse_the_same_app_for_the_same_reason():
+    # Eligibility reporting is shared: the offer rule is set membership over one
+    # enum, so a second adapter cannot invent its own wording for a cell it does
+    # not cover.
+    elig = _elig(runtime=Capability.RUNTIME_CPYTHON)
+    reasons = {a.id: registry.verdict(elig, a).reasons for a in registry.targets()}
+    for target_id, why in reasons.items():
+        assert why, target_id
+        assert "Python on a real CPython process" in why[0]

@@ -13,6 +13,15 @@
 // approval and the token lands in the provider CLI's config; this app never
 // sees it, and there is deliberately no field to paste one into.
 //
+// One target costs money instead of asking for an account. Publishing to an ICP
+// canister is paid for in cycles the author transfers themselves, from their own
+// terminal, and that is a publish PRECONDITION with its own button rather than a
+// fourth auth state — a disabled row saying "not signed in" would be both wrong
+// and useless, because there is nothing to sign in to. Pressing Fund cycles the
+// first time is also the moment the publishing identity is created, and the only
+// moment its seed phrase exists: it is shown once, behind a warning, and dropped.
+// Nothing on this page writes it to storage of any kind.
+//
 // A publish is a background run, not a request: the first one fetches a Python
 // runtime and uploads megabytes. The page starts it, polls it by phase, and
 // finds it still going if you leave and come back — the run lives in the
@@ -21,33 +30,48 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   Copy,
+  Download,
   ExternalLink,
   Info,
   Loader2,
   LogIn,
+  RefreshCw,
   Rocket,
+  ShieldAlert,
   TriangleAlert,
   Unlink,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@platform/shadcn/ui/button";
 import { ErrorBanner } from "@platform/ui/ErrorBanner";
+import { PublishTargetIcon } from "@platform/ui/PublishIcons";
 import { SkeletonLines } from "@platform/ui/Skeleton";
 import { copyToClipboard } from "@platform/lib/clipboard";
 import { pushToast } from "@platform/lib/toast";
 import { formatSize } from "@platform/lib/format";
 import {
   canPublish,
+  createIdentity,
   deploy,
   displayUrl,
   fetchAuth,
+  fetchCycles,
+  fetchFunding,
   fetchPlan,
   fetchRun,
   forget,
+  formatCycles,
   login,
   phaseProgress,
   pollDelay,
+  readingAge,
   requirements,
+  runwayLabel,
+  runwayTone,
   type PublishAuth,
+  type PublishCycles,
+  type PublishFunding,
+  type PublishIdentity,
   type PublishPlan,
   type PublishRun,
   type PublishTarget,
@@ -64,6 +88,13 @@ export default function AppPublish({ dir }: { dir: string }) {
   const [auths, setAuths] = useState<Record<string, PublishAuth>>({});
   const [runs, setRuns] = useState<Record<string, PublishRun>>({});
   const [busy, setBusy] = useState<Record<string, string>>({});
+  const [fundings, setFundings] = useState<Record<string, PublishFunding>>({});
+  const [cycles, setCycles] = useState<Record<string, PublishCycles | null>>({});
+  // The seed phrase, held for exactly as long as it is on screen. Component
+  // state and nothing else: no localStorage, no sessionStorage, no store that
+  // survives a navigation. It cannot be asked for again, from us or from the
+  // provider, so the flow does not continue until the author says they have it.
+  const [minted, setMinted] = useState<Record<string, PublishIdentity>>({});
 
   const reload = useCallback(
     (signal?: AbortSignal) =>
@@ -88,14 +119,28 @@ export default function AppPublish({ dir }: { dir: string }) {
     setLoad({ kind: "loading" });
     setAuths({});
     setRuns({});
+    setFundings({});
+    setMinted({});
     reload(ctrl.signal).then((plan) => {
       // Auth is asked for per target, AFTER the report is on screen: each probe
       // runs a provider CLI, and the eligibility half of this page needs no
       // network at all.
-      for (const t of plan?.targets ?? [])
+      for (const t of plan?.targets ?? []) {
         fetchAuth(t.id, ctrl.signal)
           .then((a) => setAuths((prev) => ({ ...prev, [t.id]: a })))
           .catch(() => {});
+        if (!t.funding) continue;
+        fetchFunding(t.id, ctrl.signal)
+          .then((f) => setFundings((prev) => ({ ...prev, [t.id]: f })))
+          .catch(() => {});
+        // The plan already carried the last reading; only a STALE one costs a
+        // round trip, and a failed refresh leaves the old number on screen.
+        setCycles((prev) => ({ ...prev, [t.id]: t.cycles }));
+        if (t.published && !t.cycles?.fresh)
+          fetchCycles(dir, t.id, { signal: ctrl.signal })
+            .then(({ cycles: c }) => setCycles((prev) => ({ ...prev, [t.id]: c })))
+            .catch(() => {});
+      }
     });
     return () => ctrl.abort();
   }, [dir, reload]);
@@ -116,7 +161,18 @@ export default function AppPublish({ dir }: { dir: string }) {
           setRuns((prev) => ({ ...prev, [r.target]: run }));
           // A finished publish changes what the page knows about the app: the
           // record it now has, and the address under the row.
-          if (run.state !== "running") reload();
+          if (run.state !== "running") {
+            const plan = await reload();
+            // A first publish is also the first moment there is a canister to
+            // read a balance from, and the runway is the number the author most
+            // needs after spending cycles. Asking here rather than waiting for
+            // the next page load.
+            const t = plan?.targets.find((x) => x.id === r.target);
+            if (t?.funding && t.published)
+              fetchCycles(dir, r.target)
+                .then(({ cycles: c }) => setCycles((prev) => ({ ...prev, [r.target]: c })))
+                .catch(() => {});
+          }
         } catch {
           // A poll that fails is a poll; the next one is 500 ms away and the
           // run is on the server either way.
@@ -136,6 +192,52 @@ export default function AppPublish({ dir }: { dir: string }) {
       setAuths((prev) => ({ ...prev, [target.id]: auth }));
       if (auth.status !== "ready")
         pushToast({ msg: auth.detail || `Not signed in to ${target.label}.`, tone: "error" });
+    } catch (e) {
+      pushToast({ msg: (e as Error).message, tone: "error" });
+    } finally {
+      setBusy((b) => ({ ...b, [target.id]: "" }));
+    }
+  };
+
+  const onFund = async (target: PublishTarget) => {
+    // The first press is what creates the identity — there is no separate setup
+    // step, and nobody who never publishes here ends up with a key on their
+    // disk. A later press only refreshes the balance, because the transfer
+    // happens in the author's own terminal and the UI has no other way to learn
+    // it landed.
+    setBusy((b) => ({ ...b, [target.id]: "fund" }));
+    try {
+      const current = fundings[target.id];
+      if (current && !current.identity) {
+        const created = await createIdentity(target.id);
+        setMinted((prev) => ({ ...prev, [target.id]: created }));
+      }
+      const next = await fetchFunding(target.id);
+      setFundings((prev) => ({ ...prev, [target.id]: next }));
+    } catch (e) {
+      pushToast({ msg: (e as Error).message, tone: "error" });
+    } finally {
+      setBusy((b) => ({ ...b, [target.id]: "" }));
+    }
+  };
+
+  // Dropping the phrase is the whole point: once the author says they have it,
+  // this app can never show it again, and neither can the provider.
+  const onPhraseSaved = (target: PublishTarget) =>
+    setMinted((prev) => {
+      const next = { ...prev };
+      delete next[target.id];
+      return next;
+    });
+
+  const onRefreshCycles = async (target: PublishTarget) => {
+    setBusy((b) => ({ ...b, [target.id]: "cycles" }));
+    try {
+      const { cycles: c, error } = await fetchCycles(dir, target.id, { refresh: true });
+      setCycles((prev) => ({ ...prev, [target.id]: c }));
+      // A refresh that failed still leaves the last reading painted, so the
+      // error is a toast rather than an empty panel.
+      if (error) pushToast({ msg: error, tone: "error" });
     } catch (e) {
       pushToast({ msg: (e as Error).message, tone: "error" });
     } finally {
@@ -200,11 +302,17 @@ export default function AppPublish({ dir }: { dir: string }) {
             key={t.id}
             target={t}
             auth={auths[t.id] ?? null}
+            funding={fundings[t.id] ?? null}
+            cycles={cycles[t.id] ?? null}
+            minted={minted[t.id] ?? null}
             run={runs[t.id] ?? null}
             busy={busy[t.id] ?? ""}
             onLogin={() => onLogin(t)}
             onPublish={() => onPublish(t)}
             onForget={() => onForget(t)}
+            onFund={() => onFund(t)}
+            onPhraseSaved={() => onPhraseSaved(t)}
+            onRefreshCycles={() => onRefreshCycles(t)}
           />
         ))}
       </div>
@@ -262,22 +370,37 @@ function Summary({ plan }: { plan: PublishPlan }) {
 function TargetCard({
   target,
   auth,
+  funding,
+  cycles,
+  minted,
   run,
   busy,
   onLogin,
   onPublish,
   onForget,
+  onFund,
+  onPhraseSaved,
+  onRefreshCycles,
 }: {
   target: PublishTarget;
   auth: PublishAuth | null;
+  funding: PublishFunding | null;
+  cycles: PublishCycles | null;
+  minted: PublishIdentity | null;
   run: PublishRun | null;
   busy: string;
   onLogin: () => void;
   onPublish: () => void;
   onForget: () => void;
+  onFund: () => void;
+  onPhraseSaved: () => void;
+  onRefreshCycles: () => void;
 }) {
   const running = run?.state === "running";
-  const ready = canPublish(target, auth) && !running && !busy;
+  // A phrase on screen blocks everything else. It exists exactly once, and a
+  // Publish that ran underneath it would be the author's attention leaving the
+  // one thing on this page they cannot get back.
+  const ready = canPublish(target, auth, funding) && !running && !busy && !minted;
   const live = run?.state === "done" ? run.result : null;
   const address = live?.url ?? target.published?.url ?? null;
 
@@ -285,7 +408,12 @@ function TargetCard({
     <section className="app-publish-target" aria-labelledby={`pub-${target.id}`}>
       <header>
         <div>
-          <h3 id={`pub-${target.id}`}>{target.label}</h3>
+          <h3 id={`pub-${target.id}`}>
+            <span className="app-publish-mark">
+              <PublishTargetIcon target={target.id} />
+            </span>
+            {target.label}
+          </h3>
           <p className="app-publish-caption">{target.blurb}</p>
         </div>
         <Button onClick={onPublish} disabled={!ready}>
@@ -306,6 +434,23 @@ function TargetCard({
       )}
 
       {target.eligible && <AuthRow auth={auth} busy={busy === "login"} onLogin={onLogin} />}
+
+      {target.eligible && target.funding && (
+        minted ? (
+          <SeedPhrase identity={minted} onSaved={onPhraseSaved} />
+        ) : (
+          <Funding
+            funding={funding}
+            published={target.published !== null}
+            busy={busy === "fund"}
+            onFund={onFund}
+          />
+        )
+      )}
+
+      {target.eligible && target.funding && cycles && (
+        <Cycles reading={cycles} busy={busy === "cycles"} onRefresh={onRefreshCycles} />
+      )}
 
       {/* The bar goes when the run does: a progress bar left standing over a
           failure reads as work still happening. */}
@@ -366,6 +511,266 @@ function AuthRow({
           {busy ? "Approve in your browser…" : "Log in"}
         </Button>
       )}
+    </div>
+  );
+}
+
+// ---- funding: a precondition with its own button -----------------------------
+
+/** A field the author copies rather than reads — a principal, a command.
+ *
+ *  Both are strings nobody retypes correctly, and one of them moves money. */
+function CopyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+  return (
+    <div className="app-publish-copyfield">
+      <span className="app-publish-caption">{label}</span>
+      <div>
+        <code className={mono ? "app-publish-mono" : undefined}>{value}</code>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Copy ${label}`}
+          onClick={async () => setCopied(await copyToClipboard(value))}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fund cycles: the affordance that stands where a disabled row with a paragraph
+ * under it would otherwise be.
+ *
+ * The first press creates the publishing identity — there is no wizard and no
+ * setup step, and an author who never publishes to this target never gets a key
+ * on their disk. Later presses only re-read the balance, because the transfer
+ * happens in the author's own terminal and this page has no way to learn it
+ * landed except by asking again.
+ *
+ * This is also where a future Buy cycles payment flow would land. Today it
+ * explains; the affordance is in the right place either way.
+ */
+function Funding({
+  funding,
+  published,
+  busy,
+  onFund,
+}: {
+  funding: PublishFunding | null;
+  published: boolean;
+  busy: boolean;
+  onFund: () => void;
+}) {
+  if (!funding)
+    return <p className="app-publish-caption app-publish-auth">Checking the balance…</p>;
+  // Already live: this panel is about affording a canister, and there is one.
+  // What matters from here is the canister's OWN runway, which the cycles
+  // readout below carries — the principal's balance is no longer the number
+  // that decides anything, and showing it as a blocker beside a working app
+  // says the app is broken when it is not.
+  if (published) return null;
+  // Funded is the only state that lets Publish run, so anything else with an
+  // identity behind it is the answer to "why is that button grey".
+  const short = funding.identity && !funding.funded;
+  return (
+    <div className={"app-publish-funding" + (short ? " app-publish-funding-short" : "")}>
+      <div className="app-publish-funding-head">
+        {/* The same shape a refused target uses above: the reason the button is
+            off, carrying its own warning mark, at the top of the panel rather
+            than in a sentence under it. A disabled button whose explanation is
+            the last line of a paragraph reads as arbitrary. */}
+        <p className={short ? "app-publish-funding-reason" : "app-publish-caption"}>
+          {short && <TriangleAlert aria-hidden />}
+          <span>{funding.detail}</span>
+        </p>
+        <Button variant="outline" size="sm" onClick={onFund} disabled={busy}>
+          {busy ? <Loader2 className="app-publish-spin" /> : <Wallet />}
+          {funding.identity ? "Check balance" : "Fund cycles"}
+        </Button>
+      </div>
+      {funding.identity && funding.principal && (
+        <>
+          <CopyField label="Your principal" value={funding.principal} mono />
+          {funding.transfer_command && (
+            <CopyField label="Transfer cycles from your terminal" value={funding.transfer_command} />
+          )}
+          <p className="app-publish-caption">
+            {/* The numbers moved up into the verdict; what is left here is the
+                thing that is true in every state and worth saying once. */}
+            fused-render never moves your money: the transfer runs in your own terminal.
+            {funding.help_url && (
+              <>
+                {" "}
+                <a href={funding.help_url} target="_blank" rel="noreferrer">
+                  How to get cycles
+                  <ExternalLink aria-hidden />
+                </a>
+              </>
+            )}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The seed phrase, shown once, at the only moment it exists.
+ *
+ * Deliberately an inline panel rather than a modal: a modal that dismisses on a
+ * stray click is the wrong container for something that cannot be shown again.
+ * Nothing continues until the author explicitly says they have it, and pressing
+ * that button is what makes this app forget the phrase.
+ *
+ * The warning is serious without being apocalyptic, because the situation is
+ * recoverable: the signing key stays in the OS keyring and `icp identity export`
+ * gets it out at any later time, so clicking past this loses portability, not
+ * access. An apocalyptic warning about a recoverable situation is how you teach
+ * people to ignore warnings. The genuinely unrecoverable case — this phrase and
+ * the keyring both gone — gets one sentence, not a wall of red.
+ */
+function SeedPhrase({
+  identity,
+  onSaved,
+}: {
+  identity: PublishIdentity;
+  onSaved: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  const save = () => {
+    const blob = new Blob(
+      [
+        `fused-render publishing identity\n`,
+        `principal: ${identity.principal}\n\n`,
+        `${identity.seed_phrase}\n\n`,
+        `Anyone holding this phrase controls every canister published from this\n`,
+        `identity and every cycle in this principal. Keep it somewhere private.\n`,
+      ],
+      { type: "text/plain" },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "fused-render-seed-phrase.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section className="app-publish-seed" aria-label="Your seed phrase">
+      <p className="app-publish-seed-lead">
+        <ShieldAlert aria-hidden />
+        This is the only time this phrase is shown.
+      </p>
+      <ul className="app-publish-notes">
+        <li>
+          <span>
+            Anyone holding it controls every canister you publish here and every cycle in
+            this principal.
+          </span>
+        </li>
+        <li>
+          <span>
+            fused-render is showing it once and does not store it. There is no way to ask us
+            for it later, and we will never ask you for it — nor will anyone legitimate.
+          </span>
+        </li>
+        <li>
+          <span>
+            Clicking past it does not lose your cycles: the key itself stays in your OS
+            keyring, and <code>icp identity export fused-render</code> gets it out. Losing
+            this phrase <em>and</em> the keyring — a wiped machine with no backup — is the
+            case that cannot be undone.
+          </span>
+        </li>
+      </ul>
+      <p className="app-publish-seed-phrase">{identity.seed_phrase}</p>
+      <CopyField label="Principal" value={identity.principal} mono />
+      <div className="app-publish-address-actions">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={async () => setCopied(await copyToClipboard(identity.seed_phrase))}
+        >
+          {copied ? <Check /> : <Copy />}
+          {copied ? "Copied" : "Copy phrase"}
+        </Button>
+        <Button variant="outline" size="sm" onClick={save}>
+          <Download />
+          Save to a file
+        </Button>
+        <Button size="sm" onClick={onSaved}>
+          <Check />
+          I&rsquo;ve saved this
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Balance and idle burn, as a runway.
+ *
+ * The pair is the point: a balance alone says nothing about how long it lasts,
+ * and a canister that runs out of cycles is frozen and eventually deleted with
+ * everything in it. That is a dead man's switch on the author's app, so it is
+ * stated next to the number rather than buried, and a low runway looks like a
+ * warning rather than a data point.
+ *
+ * Refreshed at most once a day and cached beside the app, so a stale reading is
+ * labelled with when it was taken rather than replaced by a spinner.
+ */
+function Cycles({
+  reading,
+  busy,
+  onRefresh,
+}: {
+  reading: PublishCycles;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  const tone = runwayTone(reading);
+  const runway = runwayLabel(reading);
+  return (
+    <div className={`app-publish-cycles app-publish-cycles-${tone}`}>
+      <div className="app-publish-cycles-figures">
+        <strong>{formatCycles(reading.balance)} cycles</strong>
+        <span className="app-publish-caption">
+          {runway ?? "no burn rate reported"}
+          {reading.idle_burned_per_day > 0 && (
+            <> · {formatCycles(reading.idle_burned_per_day)}/day idle</>
+          )}
+          {" · "}
+          {readingAge(reading)}
+        </span>
+      </div>
+      {(tone === "low" || tone === "critical") && (
+        <p className="app-publish-cycles-warning">
+          <TriangleAlert aria-hidden />
+          <span>
+            A canister that runs out of cycles is frozen and eventually deleted, along with
+            everything in it. Top this one up before it gets there.
+          </span>
+        </p>
+      )}
+      <Button variant="ghost" size="sm" onClick={onRefresh} disabled={busy}>
+        {busy ? <Loader2 className="app-publish-spin" /> : <RefreshCw />}
+        Refresh
+      </Button>
     </div>
   );
 }
