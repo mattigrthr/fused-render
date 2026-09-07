@@ -135,7 +135,10 @@ def icp(tmp_path, monkeypatch):
 
 @pytest.fixture
 def funded(icp):
-    icp.update(identity=True, balance=2_000_000_000_000)
+    # Comfortably clear of the floor rather than sitting on it — a fixture at
+    # exactly CREATE_CYCLES is 100M short once the ledger takes its fee, which
+    # is the bug this file now pins rather than a state to publish from.
+    icp.update(identity=True, balance=3_000_000_000_000)
     return icp
 
 
@@ -215,7 +218,7 @@ def test_funding_reports_the_principal_the_balance_and_the_command_to_run(funded
     state = Icp().funding()
     assert state.identity and state.funded
     assert state.principal == "un4fu-tqaaa-aaaab-qadjq-cai"
-    assert state.balance == 2_000_000_000_000
+    assert state.balance == 3_000_000_000_000
     # The transfer happens in the author's own terminal. fused-render has no
     # key and no wallet and never moves their money.
     assert state.transfer_command == "icp cycles transfer 3T un4fu-tqaaa-aaaab-qadjq-cai -n ic"
@@ -230,14 +233,16 @@ def test_the_suggested_transfer_clears_the_floor_rather_than_landing_on_it():
     assert SUGGESTED_TRANSFER > MINIMUM_CYCLES
 
 
-def test_the_pre_flight_floor_is_what_the_deploy_actually_asks_for(funded, site):
+def test_the_pre_flight_floor_covers_what_the_deploy_actually_asks_for(funded, site):
     # The bug this pins: the floor was the deployment guide's "budget 1-2T",
     # `icp deploy` defaults to funding creation with 2T, and an author who
     # transferred exactly the 1T the panel asked for watched the publish fail
     # with our own "not enough cycles" message beside a balance that met it.
-    from fused_render.publish.icp import CREATE_CYCLES
+    # The floor is now what the deploy requests plus what the ledger charges to
+    # grant it — see test_exactly_the_creation_amount_is_still_short.
+    from fused_render.publish.icp import CREATE_CYCLES, LEDGER_FEE
 
-    assert MINIMUM_CYCLES == CREATE_CYCLES
+    assert MINIMUM_CYCLES == CREATE_CYCLES + LEDGER_FEE
     Icp().publish(site, name="demo", record=None)
     deploy = [c for c in funded.read()["calls"] if c[:1] == ["deploy"]][0]
     # Passed explicitly, so what a publish provisions changes in a commit here
@@ -253,6 +258,20 @@ def test_a_shortfall_is_named_rather_than_left_to_two_totals_that_round_alike(ic
     assert "short" in message
 
 
+def test_exactly_the_creation_amount_is_still_short_by_the_ledgers_fee(icp, site):
+    # The failure this cost three rounds to find. `icp deploy --cycles 2T`
+    # needs 2T for the canister AND 100M for the cycles ledger's own fee, so a
+    # principal holding exactly 2T is refused — by icp, after our pre-flight
+    # check told the author 2T was enough and they transferred exactly that.
+    from fused_render.publish.icp import CREATE_CYCLES, LEDGER_FEE
+
+    assert MINIMUM_CYCLES == CREATE_CYCLES + LEDGER_FEE
+    icp.update(identity=True, balance=CREATE_CYCLES)
+    assert Icp().funding().funded is False
+    with pytest.raises(PublishError, match="100M short"):
+        Icp().publish(site, name="demo", record=None)
+
+
 def test_an_underfunded_panel_says_it_cannot_publish_not_just_what_it_holds(icp):
     # The line the Publish page leads the funding panel with IS the reason the
     # button above it is grey, and it is the only place that says so. "1T cycles
@@ -262,7 +281,10 @@ def test_an_underfunded_panel_says_it_cannot_publish_not_just_what_it_holds(icp)
     state = Icp().funding()
     assert state.funded is False
     assert "Not enough cycles to publish" in state.detail
-    assert "1T" in state.detail and "2T" in state.detail
+    # The shortfall leads: the total held and the total needed round to the same
+    # string whenever the gap is the ledger fee, and "holds 2T of the 2T needed"
+    # reads as a broken checker rather than as something to fix.
+    assert state.detail.startswith("Not enough cycles to publish: 1T short.")
 
 
 def test_a_funded_panel_states_the_balance_without_a_verdict(icp):

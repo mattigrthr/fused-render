@@ -351,8 +351,17 @@ every reader's progress in it and a panel that says nothing.
 
 `icp deploy` funds canister creation from the calling principal, and its default
 is **2T** (`--cycles`, from the CLI's own help). fused-render passes that amount
-explicitly and uses the same constant as its pre-flight floor, so the number the
-panel asks for and the number the deploy demands are one number.
+explicitly. The pre-flight floor is that plus the **cycles ledger's own 100M
+fee**, which creating a canister pays on top of what the canister receives:
+
+```
+$ icp canister call um5iw-rqaaa-aaaaq-qaaba-cai icrc1_fee '()' -n ic
+(100_000_000 : nat)
+```
+
+A principal holding exactly 2T is therefore refused, by icp, 100M short — which
+is not a hypothetical: it happened, to an author who had transferred exactly the
+2T the panel had just asked them for.
 
 They were briefly two, and the gap was exactly the sort a pre-flight check is
 supposed to prevent: the floor came from the mainnet guide's "budget 1–2T per
@@ -361,8 +370,14 @@ canister", the deploy asked for 2T, and an author who transferred precisely the
 cycles" beside a balance that met our own stated minimum.
 
 The copyable transfer command therefore suggests **more** than the floor. A
-command that names the exact minimum leaves the author on the boundary, where a
-ledger fee or a second app puts them straight back in front of the same error.
+command that names the exact minimum leaves the author on the boundary, which is
+where this went wrong twice.
+
+And the insufficient-cycles failure now keeps icp's own accounting —
+`Insufficient cycles. Requested: N cycles, available balance: M cycles` — under
+our message rather than instead of it. Ours leads because it carries the remedy;
+icp's is kept because ours has been the wrong arithmetic twice, and a floor that
+drifts again should be visible rather than inferred over three attempts.
 And the shortfall is spelled out rather than left to be inferred from two totals
 — `format_cycles` rounds, so 1.96T and 2T both print as `2T`, and "holds 2T,
 needs about 2T" reads as a broken checker rather than as something to fix.

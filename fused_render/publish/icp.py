@@ -116,10 +116,23 @@ STATIC_SITE_RECIPE = "@dfinity/static-site@v0.3.3"
 #: them to still watched the publish fail.
 CREATE_CYCLES = 2_000_000_000_000
 
-#: The floor a first publish needs, which is exactly what creating the canister
-#: costs. A principal sitting exactly on it has nothing spare, which is why the
-#: copyable transfer command suggests more.
-MINIMUM_CYCLES = CREATE_CYCLES
+#: The cycles ledger's own per-operation fee, which creating a canister pays on
+#: top of what the canister receives. Read from the ledger rather than guessed::
+#:
+#:     icp canister call um5iw-rqaaa-aaaaq-qaaba-cai icrc1_fee '()' -n ic
+#:     (100_000_000 : nat)
+#:
+#: Hardcoded rather than queried per publish: it is a ledger constant, a network
+#: round trip on every panel paint is a poor trade for it, and if it ever moves,
+#: the deploy failure now carries icp's own accounting so the next reader sees
+#: the real numbers instead of inferring them.
+LEDGER_FEE = 100_000_000
+
+#: The floor a first publish needs: what the canister is created with, plus the
+#: fee the ledger takes to do it. Both halves are load-bearing — a principal
+#: holding EXACTLY ``CREATE_CYCLES`` is 100M short, which is precisely the
+#: failure this constant existed to prevent and did not.
+MINIMUM_CYCLES = CREATE_CYCLES + LEDGER_FEE
 
 #: What the transfer command in the funding panel says. Deliberately ABOVE the
 #: floor: a command that suggests the precise minimum leaves the author on the
@@ -570,10 +583,15 @@ class Icp:
                 if balance is None
                 else f"{format_cycles(balance)} cycles on this principal."
                 if balance >= MINIMUM_CYCLES
+                # The SHORTFALL leads, because it is the number the author acts
+                # on and the only one that stays legible: the total held and the
+                # total needed round to the same string when the gap is the
+                # ledger fee, and "holds 2T of the 2T needed" reads as a bug.
                 else (
-                    f"Not enough cycles to publish: this principal holds "
-                    f"{format_cycles(balance)} of the {format_cycles(MINIMUM_CYCLES)} "
-                    "a canister needs to start."
+                    f"Not enough cycles to publish: {format_cycles(MINIMUM_CYCLES - balance)} "
+                    f"short. Creating a canister costs {format_cycles(CREATE_CYCLES)} plus the "
+                    f"ledger's {format_cycles(LEDGER_FEE)} fee, and this principal holds "
+                    f"{format_cycles(balance)}."
                 )
             ),
             help_url=FUNDING_URL,
@@ -861,7 +879,13 @@ class Icp:
         blob = self._failure(proc)
         salvage = self._salvage(canister, canister_id)
         if _OUT_OF_CYCLES.search(blob):
-            message = self._fund_message(self.balance())
+            # icp's own accounting, kept rather than replaced. It prints
+            # "Requested: N cycles, available balance: M cycles", which is the
+            # authoritative version of the arithmetic this message paraphrases —
+            # and the paraphrase has been wrong twice. Ours goes first because
+            # it is the one with the remedy in it; icp's goes last so a floor
+            # that drifts again is visible instead of inferred.
+            message = self._fund_message(self.balance()) + f"\n\nWhat icp reported:\n{blob}"
             if canister_id:
                 message += (
                     f"\n\nThe canister ({canister_id}) was created before the upload ran out, "
@@ -881,9 +905,10 @@ class Icp:
             else "fused-render could not read this principal's balance"
         )
         # The SHORTFALL, not just the two totals. Both round to the same short
-        # string often enough to matter — 1.96T and 2T both print as "2T" — and
-        # "holds 2T, needs about 2T" reads as a bug in the checker rather than
-        # as a reason the author can act on.
+        # string often enough to matter — a principal holding exactly 2T is 100M
+        # short of a 2T canister once the ledger takes its fee, and "holds 2T,
+        # needs 2T" reads as a bug in the checker rather than as something the
+        # author can fix.
         short = (
             f" It is {format_cycles(MINIMUM_CYCLES - balance)} short."
             if balance is not None and balance < MINIMUM_CYCLES
@@ -891,7 +916,8 @@ class Icp:
         )
         lines = [
             "there are not enough cycles to publish to the Internet Computer. "
-            f"{held}, and creating a canister takes {format_cycles(CREATE_CYCLES)}.{short}",
+            f"{held}, and creating a canister takes {format_cycles(CREATE_CYCLES)} plus the "
+            f"ledger's {format_cycles(LEDGER_FEE)} fee.{short}",
         ]
         if principal:
             lines.append(f"\nYour principal:\n  {principal}")
